@@ -91,6 +91,8 @@ const MENU: Record<string, MenuSection[]> = {
       { id: 'crop',    label: 'Crop to selection',          keys: '' },
       { id: 'flip-h',  label: 'Flip horizontal',            keys: '' },
       { id: 'flip-v',  label: 'Flip vertical',              keys: '' },
+      { id: 'rotate-cw',  label: 'Rotate 90° clockwise',        keys: '' },
+      { id: 'rotate-ccw', label: 'Rotate 90° counter-clockwise', keys: '' },
     ]},
   ],
   view: [

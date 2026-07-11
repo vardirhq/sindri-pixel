@@ -456,6 +456,12 @@ export function LoadingScreen({ onDone }: LoadingScreenProps) {
   );
 }
 
+export interface RecoveryInfo {
+  name: string;
+  savedAt: number;
+  spec: string;
+}
+
 export interface WelcomeScreenProps {
   onEnter: () => void;
   onNewProject: (template?: TemplateConfig) => void;
@@ -466,9 +472,21 @@ export interface WelcomeScreenProps {
   recentFiles: RecentFile[];
   savedTemplates: SavedTemplate[];
   onOpenRecent: (file: RecentFile) => void;
+  recovery?: RecoveryInfo | null;
+  onRecover?: () => void;
+  onDiscardRecovery?: () => void;
 }
 
-export function WelcomeScreen({ onEnter, onNewProject, onOpenLessons, onOpenFile, onComposeWithSindri, recentFrame, recentFiles, savedTemplates, onOpenRecent }: WelcomeScreenProps) {
+function timeAgo(ts: number): string {
+  const mins = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (mins < 1) return 'moments ago';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} h ago`;
+  return `${Math.round(hrs / 24)} d ago`;
+}
+
+export function WelcomeScreen({ onEnter, onNewProject, onOpenLessons, onOpenFile, onComposeWithSindri, recentFrame, recentFiles, savedTemplates, onOpenRecent, recovery, onRecover, onDiscardRecovery }: WelcomeScreenProps) {
   return (
     <div style={wStyles.welcomeRoot}>
       <div style={wStyles.welcomeTop}>
@@ -490,6 +508,34 @@ export function WelcomeScreen({ onEnter, onNewProject, onOpenLessons, onOpenFile
             </div>
           </div>
         </div>
+        {recovery && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 14,
+            margin: '0 0 22px', padding: '14px 18px',
+            background: 'var(--paper-2)', border: '1px dashed var(--amber)',
+          }} data-testid="recovery-banner">
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 13.5, color: 'var(--amber)', marginBottom: 3 }}>
+                Recovered work found
+              </div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+                {recovery.name} · {recovery.spec} · autosaved {timeAgo(recovery.savedAt)}
+              </div>
+            </div>
+            <span
+              style={{ fontFamily: 'var(--font-display)', fontSize: 12, padding: '7px 14px', cursor: 'pointer', background: 'var(--amber)', color: 'var(--paper)', border: '1px solid var(--amber)' }}
+              onClick={onRecover}
+            >
+              Restore
+            </span>
+            <span
+              style={{ fontFamily: 'var(--font-display)', fontSize: 12, padding: '7px 14px', cursor: 'pointer', background: 'transparent', color: 'var(--ink-3)', border: '1px solid var(--rule-2)' }}
+              onClick={onDiscardRecovery}
+            >
+              Discard
+            </span>
+          </div>
+        )}
         <div style={wStyles.sectionRow}>
           <span style={wStyles.sectionLabel}>start</span>
           <span style={wStyles.sectionMeta}>3 ways in</span>

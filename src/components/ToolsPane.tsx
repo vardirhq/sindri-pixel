@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import type { Tool, ToolOptions, Modifiers, LeftTab } from '../types';
+import type { Tool, ToolOptions, Modifiers, LeftTab, SymmetryMode } from '../types';
 import {
   IconPencil, IconEraser, IconFill, IconPicker,
   IconLine, IconRect, IconCircle, IconMarquee,
@@ -18,6 +18,7 @@ interface ToolsPaneProps {
   onHelperChange: (helper: string | null) => void;
   modifiers: Modifiers;
   onModifierToggle: (key: keyof Modifiers) => void;
+  onSymmetryChange: (mode: SymmetryMode) => void;
   toolOptions: ToolOptions;
   onToolOptionChange: (key: keyof ToolOptions, value: number | boolean) => void;
   activeTab: LeftTab;
@@ -261,7 +262,7 @@ function HistoryPane() {
 export function ToolsPane({
   tool, onToolChange,
   helper, onHelperChange,
-  modifiers, onModifierToggle,
+  modifiers, onModifierToggle, onSymmetryChange,
   toolOptions, onToolOptionChange,
   activeTab, onTabChange,
 }: ToolsPaneProps) {
@@ -339,14 +340,31 @@ export function ToolsPane({
       <div style={tpStyles.sectionRow}>
         <span style={tpStyles.sectionLabel}>Modifiers</span>
       </div>
-      {(Object.keys(modifiers) as Array<keyof Modifiers>).map(key => (
-        <div key={key} style={tpStyles.modRow} onClick={() => onModifierToggle(key)}>
-          <span style={tpStyles.modName}>{key.charAt(0).toUpperCase() + key.slice(1)}</span>
-          <div style={tpStyles.modToggle(modifiers[key])}>
-            <div style={tpStyles.modThumb(modifiers[key])} />
+      <div style={{ ...tpStyles.modRow, cursor: 'default' }}>
+        <span style={tpStyles.modName}>Symmetry</span>
+      </div>
+      <div style={tpStyles.helperRow}>
+        {([
+          { id: 'off',  label: 'Off' },
+          { id: 'v',    label: 'Vert' },
+          { id: 'h',    label: 'Horiz' },
+          { id: 'both', label: 'Both' },
+        ] as Array<{ id: SymmetryMode; label: string }>).map((m, i, arr) => (
+          <div
+            key={m.id}
+            style={tpStyles.helperBtn(modifiers.symmetry === m.id, i === 0, i === arr.length - 1)}
+            onClick={() => onSymmetryChange(m.id)}
+          >
+            <span style={tpStyles.helperLbl}>{m.label}</span>
           </div>
+        ))}
+      </div>
+      <div style={tpStyles.modRow} onClick={() => onModifierToggle('tile')}>
+        <span style={tpStyles.modName}>Tile (wrap)</span>
+        <div style={tpStyles.modToggle(modifiers.tile)}>
+          <div style={tpStyles.modThumb(modifiers.tile)} />
         </div>
-      ))}
+      </div>
 
       {/* Tool options */}
       <div style={tpStyles.sectionRow}>

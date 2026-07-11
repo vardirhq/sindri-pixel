@@ -26,10 +26,12 @@ interface RightPaneProps {
   swatches: string[];
   onAddSwatch: () => void;
   onSwatchContextMenu?: (color: string, x: number, y: number) => void;
+  usedColors?: string[];
   frameIdx: number;
   frameCount: number;
   frameDuration: number;
   onSetFrameDuration: (ms: number) => void;
+  onApplyDurationToAll?: () => void;
   canvasW: number;
   canvasH: number;
   proposal: Proposal | null;
@@ -57,6 +59,7 @@ interface PaletteTabProps {
   swatches: string[];
   onAddSwatch: () => void;
   onSwatchContextMenu?: (color: string, x: number, y: number) => void;
+  usedColors?: string[];
 }
 
 interface InspectorTabProps {
@@ -65,6 +68,7 @@ interface InspectorTabProps {
   frameCount: number;
   duration: number;
   onSetDuration: (ms: number) => void;
+  onApplyDurationToAll?: () => void;
   canvasW: number;
   canvasH: number;
 }
@@ -325,19 +329,36 @@ function LayersTab({
 
 // ── PaletteTab ───────────────────────────────────────────────────────────────
 
-function PaletteTab({ color, onColorChange, swatches, onAddSwatch, onSwatchContextMenu }: PaletteTabProps) {
+function PaletteTab({ color, onColorChange, swatches, onAddSwatch, onSwatchContextMenu, usedColors }: PaletteTabProps) {
   const rgb = hexToRgb(color || '#000000');
+  // Track the raw hex text so partial input doesn't paint invalid colors.
+  const [hexDraft, setHexDraft] = React.useState(color);
+  React.useEffect(() => { setHexDraft(color); }, [color]);
+
+  const commitHex = (raw: string) => {
+    setHexDraft(raw);
+    const v = raw.startsWith('#') ? raw : '#' + raw;
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) onColorChange(v.toLowerCase());
+  };
 
   return (
     <div>
       {/* Active color */}
       <div style={rpStyles.activeColorRow}>
-        <div style={rpStyles.bigSwatch(color)} />
+        <div style={{ ...rpStyles.bigSwatch(color), position: 'relative', overflow: 'hidden' }}>
+          <input
+            type="color"
+            value={/^#[0-9a-fA-F]{6}$/.test(color) ? color : '#000000'}
+            onChange={e => onColorChange(e.target.value)}
+            title="Open color picker"
+            style={{ position: 'absolute', inset: -4, width: 'calc(100% + 8px)', height: 'calc(100% + 8px)', opacity: 0, cursor: 'pointer' }}
+          />
+        </div>
         <div style={rpStyles.activeColorMeta}>
           <input
             type="text"
-            value={color}
-            onChange={e => onColorChange(e.target.value)}
+            value={hexDraft}
+            onChange={e => commitHex(e.target.value)}
             style={rpStyles.hexInput}
             spellCheck={false}
           />
@@ -383,13 +404,36 @@ function PaletteTab({ color, onColorChange, swatches, onAddSwatch, onSwatchConte
           );
         })}
       </div>
+
+      {/* Colors currently painted in the artwork */}
+      {usedColors && usedColors.length > 0 && (
+        <React.Fragment>
+          <div style={rpStyles.palHead}>
+            <span style={rpStyles.sectionLabel}>In artwork</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-4)' }}>{usedColors.length}</span>
+          </div>
+          <div style={{ ...rpStyles.palGrid, marginBottom: 18 }}>
+            {usedColors.map((sw) => (
+              <div
+                key={sw}
+                style={rpStyles.swatch}
+                onClick={() => onColorChange(sw)}
+                onContextMenu={e => { e.preventDefault(); onSwatchContextMenu?.(sw, e.clientX, e.clientY); }}
+                title={sw}
+              >
+                <div style={rpStyles.swatchInner(sw, sw === color)} />
+              </div>
+            ))}
+          </div>
+        </React.Fragment>
+      )}
     </div>
   );
 }
 
 // ── InspectorTab ─────────────────────────────────────────────────────────────
 
-function InspectorTab({ frame, frameIdx, frameCount, duration, onSetDuration, canvasW, canvasH }: InspectorTabProps) {
+function InspectorTab({ frame, frameIdx, frameCount, duration, onSetDuration, onApplyDurationToAll, canvasW, canvasH }: InspectorTabProps) {
   // Count painted pixels and unique colors across all visible layers
   let paintedCount = 0;
   const colorSet = new Set<string>();
@@ -449,7 +493,7 @@ function InspectorTab({ frame, frameIdx, frameCount, duration, onSetDuration, ca
         </div>
         <div style={{ padding: '0 22px 14px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-4)' }}>duration (ms)</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-4)' }}>duration — this frame (ms)</span>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-3)' }}>{duration}</span>
           </div>
           <PixelSlider
@@ -460,6 +504,19 @@ function InspectorTab({ frame, frameIdx, frameCount, duration, onSetDuration, ca
             onChange={onSetDuration}
             snap={10}
           />
+          {onApplyDurationToAll && frameCount > 1 && (
+            <div
+              style={{
+                marginTop: 10, padding: '6px 0', textAlign: 'center', cursor: 'pointer',
+                fontFamily: 'var(--font-display)', fontSize: 11.5, color: 'var(--ink-3)',
+                border: '1px solid var(--rule-2)',
+              }}
+              onClick={onApplyDurationToAll}
+              title="Copy this frame's duration to every frame"
+            >
+              Apply to all {frameCount} frames
+            </div>
+          )}
         </div>
       </div>
 
@@ -536,8 +593,8 @@ export function RightPane({
   frame, activeLayerIdx,
   onSelectLayer, onAddLayer, onDeleteLayer, onToggleLayerVisible, onSetLayerOpacity, onMergeDown,
   onRenameLayer, onLayerContextMenu,
-  color, onColorChange, swatches, onAddSwatch, onSwatchContextMenu,
-  frameIdx, frameCount, frameDuration, onSetFrameDuration,
+  color, onColorChange, swatches, onAddSwatch, onSwatchContextMenu, usedColors,
+  frameIdx, frameCount, frameDuration, onSetFrameDuration, onApplyDurationToAll,
   canvasW, canvasH,
   proposal, onAcceptProposal, onRejectProposal, onRefineProposal,
 }: RightPaneProps) {
@@ -592,6 +649,7 @@ export function RightPane({
             swatches={swatches}
             onAddSwatch={onAddSwatch}
             onSwatchContextMenu={onSwatchContextMenu}
+            usedColors={usedColors}
           />
         )}
         {activeTab === 'inspector' && (
@@ -601,6 +659,7 @@ export function RightPane({
             frameCount={frameCount}
             duration={frameDuration}
             onSetDuration={onSetFrameDuration}
+            onApplyDurationToAll={onApplyDurationToAll}
             canvasW={canvasW}
             canvasH={canvasH}
           />

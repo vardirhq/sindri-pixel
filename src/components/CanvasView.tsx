@@ -252,6 +252,7 @@ export function CanvasView({
 
   const frame = frames[frameIdx];
   const prevFrame = frameIdx > 0 ? frames[frameIdx - 1] : frames[frames.length - 1];
+  const nextFrame = frames[(frameIdx + 1) % frames.length];
 
   const drawFrameToCanvas = useCallback((canvas: HTMLCanvasElement | null, frameData: Frame | null | undefined, opts: DrawOpts = {}) => {
     if (!canvas) return;
@@ -305,7 +306,23 @@ export function CanvasView({
     ctx.clearRect(0, 0, onionRef.current.width, onionRef.current.height);
     if (!showOnionSkin || frames.length < 2) return;
     drawFrameToCanvas(onionRef.current, prevFrame, { alpha: 0.28 });
-  }, [showOnionSkin, prevFrame, drawFrameToCanvas, activeTab, frames.length]);
+    // Also ghost the next frame, fainter, without wiping the previous one.
+    if (frames.length > 2 && nextFrame !== prevFrame) {
+      const nctx = onionRef.current.getContext('2d')!;
+      nctx.globalAlpha = 1;
+      nextFrame.layers.forEach((layer) => {
+        if (!layer.visible) return;
+        nctx.globalAlpha = 0.14 * layer.opacity;
+        for (let y = 0; y < canvasH; y++) {
+          for (let x = 0; x < canvasW; x++) {
+            const c = layer.pixels[y][x];
+            if (c) { nctx.fillStyle = c; nctx.fillRect(x * zoom, y * zoom, zoom, zoom); }
+          }
+        }
+      });
+      nctx.globalAlpha = 1;
+    }
+  }, [showOnionSkin, prevFrame, nextFrame, drawFrameToCanvas, activeTab, frames.length, canvasW, canvasH, zoom]);
 
   useEffect(() => {
     if (!ghostRef.current) return;
@@ -366,10 +383,15 @@ export function CanvasView({
       ctx.stroke();
     }
 
-    if (modifiers.symmetry) {
+    if (modifiers.symmetry !== 'off') {
       ctx.strokeStyle = 'rgba(240,192,80,0.18)';
       ctx.setLineDash([3, 3]);
-      ctx.beginPath(); ctx.moveTo(artboardW / 2 + 0.5, 0); ctx.lineTo(artboardW / 2 + 0.5, artboardH); ctx.stroke();
+      if (modifiers.symmetry === 'v' || modifiers.symmetry === 'both') {
+        ctx.beginPath(); ctx.moveTo(artboardW / 2 + 0.5, 0); ctx.lineTo(artboardW / 2 + 0.5, artboardH); ctx.stroke();
+      }
+      if (modifiers.symmetry === 'h' || modifiers.symmetry === 'both') {
+        ctx.beginPath(); ctx.moveTo(0, artboardH / 2 + 0.5); ctx.lineTo(artboardW, artboardH / 2 + 0.5); ctx.stroke();
+      }
       ctx.setLineDash([]);
     }
 
@@ -436,11 +458,12 @@ export function CanvasView({
   useEffect(() => {
     if (activeTab !== 'preview' && activeTab !== 'split') return;
     if (!isPlaying) return;
-    const id = setInterval(() => {
+    // Honor each frame's own duration rather than a single global interval.
+    const id = setTimeout(() => {
       setPreviewFrame((f) => (f + 1) % frames.length);
-    }, frames[0]?.duration ?? 120);
-    return () => clearInterval(id);
-  }, [activeTab, isPlaying, frames]);
+    }, frames[previewFrame]?.duration ?? 120);
+    return () => clearTimeout(id);
+  }, [activeTab, isPlaying, frames, previewFrame]);
 
   useEffect(() => {
     if (activeTab !== 'preview' && activeTab !== 'split') return;
@@ -489,21 +512,21 @@ export function CanvasView({
       }
     };
     const r = Math.floor(sz / 2);
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        if (sz === 1 && (dx !== 0 || dy !== 0)) continue;
-        apply(x + dx, y + dy);
-      }
-    }
-    if (modifiers.symmetry) {
-      const mx = canvasW - 1 - x;
+    const stamp = (cx: number, cy: number) => {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           if (sz === 1 && (dx !== 0 || dy !== 0)) continue;
-          apply(mx + dx, y + dy);
+          apply(cx + dx, cy + dy);
         }
       }
-    }
+    };
+    stamp(x, y);
+    const sym = modifiers.symmetry;
+    const mx = canvasW - 1 - x;
+    const my = canvasH - 1 - y;
+    if (sym === 'v' || sym === 'both') stamp(mx, y);
+    if (sym === 'h' || sym === 'both') stamp(x, my);
+    if (sym === 'both') stamp(mx, my);
   };
 
   const linePixels = (x0: number, y0: number, x1: number, y1: number): [number, number][] => {
@@ -666,8 +689,15 @@ export function CanvasView({
   };
 
   const handleDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;  // ignore right-click / middle-click
     if (activeTab !== 'editor' && activeTab !== 'split') return;
+
+    // Middle-mouse always pans, whatever the active tool.
+    if (e.button === 1) {
+      e.preventDefault();
+      panDragRef.current = { startX: e.clientX, startY: e.clientY, originX: panOffset.x, originY: panOffset.y };
+      return;
+    }
+    if (e.button !== 0) return;  // ignore right-click
     e.preventDefault();
 
     // Pan: track raw screen coords, not pixel coords
@@ -680,7 +710,8 @@ export function CanvasView({
     if (x < 0 || y < 0 || x >= canvasW || y >= canvasH) return;
     const layer = frame.layers[activeLayerIdx];
 
-    if (tool === 'picker') {
+    // Alt-click samples the color under the cursor with any drawing tool.
+    if (e.altKey || tool === 'picker') {
       for (let i = frame.layers.length - 1; i >= 0; i--) {
         const L = frame.layers[i];
         if (L.visible && L.pixels[y][x]) { onColorPick(L.pixels[y][x] as string); return; }
@@ -811,7 +842,7 @@ export function CanvasView({
 
   const handleMove = (e: React.MouseEvent) => {
     // Pan: update offset using raw screen coords, skip pixel cursor
-    if (tool === 'pan' && panDragRef.current) {
+    if (panDragRef.current) {
       const dx = e.clientX - panDragRef.current.startX;
       const dy = e.clientY - panDragRef.current.startY;
       setPanOffset({ x: panDragRef.current.originX + dx, y: panDragRef.current.originY + dy });
@@ -1038,11 +1069,43 @@ export function CanvasView({
 
   const handleLeave = () => onCursorChange(null);
 
+  // Escape cancels an in-flight drag (shape preview, selection, or move).
+  useEffect(() => {
+    if (!drag) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // A lifted floating selection must be stamped back where it started.
+      if (drag.tool === 'move' && drag.hasLifted && drag.draft) {
+        onPixelsChange(drag.draft);
+      }
+      setDrag(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drag, onPixelsChange]);
+
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? -1 : 1;
     const next = Math.max(0, Math.min(ZOOM_LEVELS.length - 1, zoomIdx + delta));
     if (next !== zoomIdx) {
+      // Anchor the zoom at the cursor: shift the pan offset so the point under
+      // the mouse stays put. The artboard is centered, so growth is symmetric
+      // around its center plus the pan offset.
+      const board = baseRef.current;
+      if (board) {
+        const rect = board.getBoundingClientRect();
+        const fx = (e.clientX - rect.left) / rect.width;
+        const fy = (e.clientY - rect.top) / rect.height;
+        if (fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1) {
+          const newW = canvasW * ZOOM_LEVELS[next];
+          const newH = canvasH * ZOOM_LEVELS[next];
+          setPanOffset((p) => ({
+            x: p.x - (fx - 0.5) * (newW - rect.width),
+            y: p.y - (fy - 0.5) * (newH - rect.height),
+          }));
+        }
+      }
       onZoomChange(next);
       setZoomBadgeVisible(true);
       clearTimeout(zoomBadgeTimerRef.current ?? undefined);

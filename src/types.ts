@@ -30,7 +30,7 @@ export type Tool =
   | 'move'
   | 'pan';
 
-export type ViewHelper = 'top' | 'side' | 'iso' | null;
+export type ViewHelper = 'topdown' | 'side' | 'iso' | null;
 
 export interface ToolOptions {
   brushSize: number;
@@ -40,8 +40,10 @@ export interface ToolOptions {
   threshold: number;
 }
 
+export type SymmetryMode = 'off' | 'v' | 'h' | 'both';
+
 export interface Modifiers {
-  symmetry: boolean;
+  symmetry: SymmetryMode;
   tile: boolean;
 }
 
