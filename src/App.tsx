@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import type { Frame, Tool, ViewHelper, ToolOptions, Modifiers, LeftTab, RightTab, CenterTab, Density, TutorialMode, Proposal, AppStage, CursorPos, AppMenuState, SpotlightRect, AIStatus } from './types';
+import type { Frame, Tool, ViewHelper, ToolOptions, Modifiers, SymmetryMode, LeftTab, RightTab, CenterTab, Density, TutorialMode, Proposal, AppStage, CursorPos, AppMenuState, SpotlightRect, AIStatus, PixelGrid } from './types';
 import { CANVAS_W, CANVAS_H, INITIAL_FRAMES, SWATCHES, buildProposalFrame, ZOOM_LEVELS } from './data';
 import { Topbar } from './components/Topbar';
 import { StatusBar } from './components/StatusBar';
@@ -20,8 +20,9 @@ import type { BuilderLesson } from './components/BuilderPanes';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { getRecents, pushRecent, getSavedTemplates, saveTemplate } from './lib/storage';
-import type { RecentFile, SavedTemplate } from './lib/storage';
+import { getRecents, pushRecent, getSavedTemplates, saveTemplate, readAutosave, writeAutosave, clearAutosave } from './lib/storage';
+import type { RecentFile, SavedTemplate, AutosaveSnapshot } from './lib/storage';
+import { IS_TAURI, downloadBytes, downloadText, pickFile, encodePngInBrowser, decodePngInBrowser } from './lib/platform';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -71,6 +72,12 @@ const appStyles: Record<string, React.CSSProperties> = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+interface HistorySnapshot {
+  frames: Frame[];
+  w: number;
+  h: number;
+}
 
 function makeProposal(prompt: string): Proposal {
   return {
@@ -311,6 +318,94 @@ function ResizeCanvasModal({
 }
 
 // ---------------------------------------------------------------------------
+// Export Modal
+// ---------------------------------------------------------------------------
+
+export type ExportFormat = 'png' | 'gif' | 'sheet';
+
+function ExportModal({
+  open, format, frameCount, canvasW, canvasH, onClose, onExport,
+}: {
+  open: boolean;
+  format: ExportFormat;
+  frameCount: number;
+  canvasW: number;
+  canvasH: number;
+  onClose: () => void;
+  onExport: (format: ExportFormat, scale: number, columns: number) => void;
+}) {
+  const [scale, setScale] = React.useState(1);
+  const [columns, setColumns] = React.useState(frameCount);
+
+  React.useEffect(() => {
+    if (open) setColumns(frameCount);
+  }, [open, frameCount]);
+
+  if (!open) return null;
+
+  const titles: Record<ExportFormat, string> = {
+    png: 'Export PNG (current frame)',
+    gif: 'Export animated GIF',
+    sheet: 'Export sprite sheet',
+  };
+  const rows = format === 'sheet' ? Math.ceil(frameCount / Math.max(1, columns)) : 1;
+  const outW = (format === 'sheet' ? canvasW * Math.min(columns, frameCount) : canvasW) * scale;
+  const outH = (format === 'sheet' ? canvasH * rows : canvasH) * scale;
+
+  const scrim: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' };
+  const box: React.CSSProperties = { background: 'var(--paper-2)', border: '1px solid var(--rule-2)', width: 300, padding: '24px 24px 20px', boxShadow: '0 12px 32px rgba(0,0,0,0.5)', color: 'var(--ink)', fontFamily: 'var(--font-sans)' };
+  const segRow: React.CSSProperties = { display: 'flex', marginBottom: 16 };
+  const seg = (active: boolean): React.CSSProperties => ({
+    flex: 1, textAlign: 'center', padding: '7px 0', cursor: 'pointer',
+    fontFamily: 'var(--font-mono)', fontSize: 12,
+    background: active ? 'var(--paper-3)' : 'var(--paper)',
+    color: active ? 'var(--ink)' : 'var(--ink-3)',
+    border: '1px solid var(--rule-2)', borderLeft: 'none',
+  });
+  const btn = (primary: boolean): React.CSSProperties => ({ fontFamily: 'var(--font-display)', fontSize: 12.5, padding: '7px 16px', background: primary ? 'var(--ink)' : 'transparent', border: `1px solid ${primary ? 'var(--ink)' : 'var(--rule-2)'}`, color: primary ? 'var(--paper)' : 'var(--ink-2)', cursor: 'pointer' });
+  const label: React.CSSProperties = { fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8, fontFamily: 'var(--font-display)' };
+
+  return (
+    <div style={scrim} onClick={onClose}>
+      <div style={box} onClick={e => e.stopPropagation()}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, marginBottom: 20 }}>{titles[format]}</div>
+
+        <div style={label}>Scale</div>
+        <div style={segRow}>
+          {[1, 2, 4, 8, 16].map((s, i) => (
+            <div key={s} style={{ ...seg(scale === s), ...(i === 0 ? { borderLeft: '1px solid var(--rule-2)' } : {}) }} onClick={() => setScale(s)}>
+              {s}×
+            </div>
+          ))}
+        </div>
+
+        {format === 'sheet' && (
+          <React.Fragment>
+            <div style={label}>Columns</div>
+            <div style={{ marginBottom: 16 }}>
+              <input
+                type="number" min={1} max={frameCount} value={columns}
+                style={{ background: 'var(--paper)', border: '1px solid var(--rule-2)', color: 'var(--ink)', fontFamily: 'var(--font-mono)', fontSize: 13, padding: '6px 8px', width: '100%', boxSizing: 'border-box' }}
+                onChange={e => setColumns(Math.max(1, Math.min(frameCount, parseInt(e.target.value) || 1)))}
+              />
+            </div>
+          </React.Fragment>
+        )}
+
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-4)', marginBottom: 20 }}>
+          output · {outW} × {outH} px{format === 'gif' ? ` · ${frameCount} frames` : format === 'sheet' ? ` · ${frameCount} tiles` : ''}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={btn(false)}>Cancel</button>
+          <button onClick={() => { onExport(format, scale, columns); onClose(); }} style={btn(true)}>Export</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 
@@ -348,7 +443,7 @@ function App() {
     contiguous: true,
     threshold: 32,
   });
-  const [modifiers, setModifiers] = useState<Modifiers>({ symmetry: false, tile: false });
+  const [modifiers, setModifiers] = useState<Modifiers>({ symmetry: 'off', tile: false });
   const [helper, setHelper] = useState<ViewHelper>(null);
 
   const [leftTab, setLeftTab] = useState<LeftTab>('tools');
@@ -366,8 +461,9 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [cmdKOpen, setCmdKOpen] = useState(false);
   const [maximized, setMaximized] = useState(false);
-  // Keep maximized state in sync with the actual OS window
+  // Keep maximized state in sync with the actual OS window (Tauri only)
   useEffect(() => {
+    if (!IS_TAURI) return;
     const win = getCurrentWindow();
     void win.isMaximized().then(setMaximized);
     const unlisten = win.onResized(() => void win.isMaximized().then(setMaximized));
@@ -413,6 +509,11 @@ function App() {
     setSwatches(PROFILE_SWATCHES[profile] ?? SWATCHES);
     setProposal(null);
     setNewProjectFor(null);
+    setCurrentFilePath(null);
+    setSelection(null);
+    pastRef.current = [];
+    futureRef.current = [];
+    setDirty(false);
     const doSaveTemplate = (c as { saveAsTemplate?: boolean }).saveAsTemplate ?? false;
     if (doSaveTemplate) {
       saveTemplate({ name, w, h, frames: Math.max(1, frameCount), animated: !!c.animated, profile });
@@ -429,35 +530,51 @@ function App() {
   const [showHint, setShowHint] = useState(false);
   const [showAIHint, setShowAIHint] = useState(false);
   const canvasShellRef = useRef<HTMLDivElement>(null);
-  const pastRef = useRef<Frame[][]>([]);
-  const futureRef = useRef<Frame[][]>([]);
+  const pastRef = useRef<HistorySnapshot[]>([]);
+  const futureRef = useRef<HistorySnapshot[]>([]);
   const [spotlightRect, setSpotlightRect] = useState<SpotlightRect | null>(null);
 
   const [draftLesson, setDraftLesson] = useState<BuilderLesson>(DEMO_LESSON);
   const [builderStepIdx, setBuilderStepIdx] = useState(1);
 
   // ── History (undo / redo) ──────────────────────────────────────────────────
-  // pushHistory captures frames BEFORE a change; call it just before setFrames.
+  // Snapshots capture frames AND canvas dimensions so undoing a resize/crop
+  // restores a consistent grid. pushHistory is called just before setFrames.
+  const [dirty, setDirty] = useState(false);
+
+  const applySnapshot = useCallback((snap: HistorySnapshot) => {
+    setFrames(snap.frames);
+    setCanvasW(snap.w);
+    setCanvasH(snap.h);
+    setFrameIdx((i) => Math.max(0, Math.min(i, snap.frames.length - 1)));
+    setActiveLayerIdx((i) => {
+      const maxLayers = Math.max(...snap.frames.map((f) => f.layers.length));
+      return Math.max(0, Math.min(i, maxLayers - 1));
+    });
+    setSelection(null);
+  }, []);
+
   const pushHistory = useCallback(() => {
-    pastRef.current = [...pastRef.current.slice(-49), frames];
+    pastRef.current = [...pastRef.current.slice(-49), { frames, w: canvasW, h: canvasH }];
     futureRef.current = [];
-  }, [frames]);
+    setDirty(true);
+  }, [frames, canvasW, canvasH]);
 
   const undo = useCallback(() => {
     if (!pastRef.current.length) return;
     const prev = pastRef.current[pastRef.current.length - 1];
-    futureRef.current = [frames, ...futureRef.current.slice(0, 49)];
+    futureRef.current = [{ frames, w: canvasW, h: canvasH }, ...futureRef.current.slice(0, 49)];
     pastRef.current = pastRef.current.slice(0, -1);
-    setFrames(prev);
-  }, [frames]);
+    applySnapshot(prev);
+  }, [frames, canvasW, canvasH, applySnapshot]);
 
   const redo = useCallback(() => {
     if (!futureRef.current.length) return;
     const next = futureRef.current[0];
-    pastRef.current = [...pastRef.current.slice(-49), frames];
+    pastRef.current = [...pastRef.current.slice(-49), { frames, w: canvasW, h: canvasH }];
     futureRef.current = futureRef.current.slice(1);
-    setFrames(next);
-  }, [frames]);
+    applySnapshot(next);
+  }, [frames, canvasW, canvasH, applySnapshot]);
 
   useEffect(() => {
     if (tutorialMode !== 'playing') { setSpotlightRect(null); return; }
@@ -515,9 +632,10 @@ function App() {
   useEffect(() => {
     if (!isPlaying) return;
     if (centerTab !== 'editor') return;
-    const id = setInterval(() => { setFrameIdx((i) => (i + 1) % frames.length); }, frames[0]?.duration ?? 120);
-    return () => clearInterval(id);
-  }, [isPlaying, frames, centerTab]);
+    // Each frame holds for its own duration.
+    const id = setTimeout(() => { setFrameIdx((i) => (i + 1) % frames.length); }, frames[frameIdx]?.duration ?? 120);
+    return () => clearTimeout(id);
+  }, [isPlaying, frames, frameIdx, centerTab]);
 
   const updateActiveLayerPixels = useCallback((newPixels: (string | null)[][]) => {
     setFrames((fs) => {
@@ -691,28 +809,96 @@ function App() {
     setFrameIdx(idx);
   }, [canvasH, canvasW, pushHistory]);
 
-  // ── Flip operations (extracted as named callbacks) ─────────────────────────
-  const flipH = useCallback(() => {
+  // ── Flip / rotate operations ───────────────────────────────────────────────
+  // With an active selection: transform only the selected pixels on the active
+  // layer, in place within the selection's bounding box.
+  // Without a selection: transform every layer of the current frame.
+
+  const transformSelection = useCallback((fn: (rx: number, ry: number, w: number, h: number) => [number, number]) => {
+    if (!selection) return false;
+    const layer = frames[frameIdx]?.layers[activeLayerIdx];
+    if (!layer) return false;
     pushHistory();
-    setFrames((fs) => fs.map((f) => ({
+    const minX = Math.min(selection.x0, selection.x1), maxX = Math.max(selection.x0, selection.x1);
+    const minY = Math.min(selection.y0, selection.y1), maxY = Math.max(selection.y0, selection.y1);
+    const w = maxX - minX + 1, h = maxY - minY + 1;
+    const selSet = selection.pixels ? new Set(selection.pixels.map(([sx, sy]) => `${sx},${sy}`)) : null;
+    const inSel = (px: number, py: number) =>
+      px >= minX && px <= maxX && py >= minY && py <= maxY && (!selSet || selSet.has(`${px},${py}`));
+
+    const newPixels: PixelGrid = layer.pixels.map((row, py) =>
+      row.map((col, px) => (inSel(px, py) ? null : col))
+    );
+    for (let ry = 0; ry < h; ry++) {
+      for (let rx = 0; rx < w; rx++) {
+        const sx = minX + rx, sy = minY + ry;
+        if (!inSel(sx, sy)) continue;
+        const col = layer.pixels[sy][sx];
+        if (col === null) continue;
+        const [nx, ny] = fn(rx, ry, w, h);
+        const dx = minX + nx, dy = minY + ny;
+        if (dx >= 0 && dx < canvasW && dy >= 0 && dy < canvasH) newPixels[dy][dx] = col;
+      }
+    }
+    updateActiveLayerPixels(newPixels);
+    return true;
+  }, [selection, frames, frameIdx, activeLayerIdx, canvasW, canvasH, pushHistory, updateActiveLayerPixels]);
+
+  const flipH = useCallback(() => {
+    if (transformSelection((rx, ry, w) => [w - 1 - rx, ry])) return;
+    pushHistory();
+    setFrames((fs) => fs.map((f, i) => (i !== frameIdx ? f : {
       ...f,
       layers: f.layers.map((l) => ({
         ...l,
         pixels: l.pixels.map((row) => row.slice().reverse()),
       })),
     })));
-  }, [pushHistory]);
+  }, [transformSelection, pushHistory, frameIdx]);
 
   const flipV = useCallback(() => {
+    if (transformSelection((rx, ry, _w, h) => [rx, h - 1 - ry])) return;
     pushHistory();
-    setFrames((fs) => fs.map((f) => ({
+    setFrames((fs) => fs.map((f, i) => (i !== frameIdx ? f : {
       ...f,
       layers: f.layers.map((l) => ({
         ...l,
         pixels: l.pixels.slice().reverse(),
       })),
     })));
-  }, [pushHistory]);
+  }, [transformSelection, pushHistory, frameIdx]);
+
+  // Rotate 90°. Selections rotate in place around the bounding-box center
+  // (the box's width/height swap). Without a selection, the whole canvas
+  // rotates and its dimensions swap across every frame.
+  const rotate90 = useCallback((cw: boolean) => {
+    if (selection) {
+      const minX = Math.min(selection.x0, selection.x1), maxX = Math.max(selection.x0, selection.x1);
+      const minY = Math.min(selection.y0, selection.y1), maxY = Math.max(selection.y0, selection.y1);
+      const w = maxX - minX + 1, h = maxY - minY + 1;
+      // Anchor the rotated (h × w) box at the same top-left corner.
+      transformSelection((rx, ry, bw, bh) => (cw ? [bh - 1 - ry, rx] : [ry, bw - 1 - rx]));
+      const nx1 = Math.min(canvasW - 1, minX + h - 1);
+      const ny1 = Math.min(canvasH - 1, minY + w - 1);
+      setSelection({ x0: minX, y0: minY, x1: nx1, y1: ny1 });
+      return;
+    }
+    pushHistory();
+    const newW = canvasH, newH = canvasW;
+    setFrames((fs) => fs.map((f) => ({
+      ...f,
+      layers: f.layers.map((l) => ({
+        ...l,
+        pixels: Array.from({ length: newH }, (_, y) =>
+          Array.from({ length: newW }, (_, x) =>
+            cw ? l.pixels[canvasH - 1 - x][y] : l.pixels[x][canvasW - 1 - y]
+          )
+        ),
+      })),
+    })));
+    setCanvasW(newW);
+    setCanvasH(newH);
+  }, [selection, transformSelection, pushHistory, canvasW, canvasH]);
 
   // ── Layer rename ───────────────────────────────────────────────────────────
   const renameLayer = useCallback((idx: number, name: string) => {
@@ -879,14 +1065,47 @@ function App() {
     setFrameIdx((i) => Math.max(0, Math.min(i, frames.length - 2)));
   };
 
+  // Set the duration of the current frame only.
   const setFrameDuration = (ms: number) => {
+    setFrames((fs) => fs.map((f, i) => (i === frameIdx ? { ...f, duration: ms } : f)));
+  };
+
+  // Copy the current frame's duration to every frame.
+  const applyDurationToAll = () => {
+    const ms = frames[frameIdx]?.duration ?? 120;
     setFrames((fs) => fs.map((f) => ({ ...f, duration: ms })));
   };
+
+  // ── Frame reorder ──────────────────────────────────────────────────────────
+  const moveFrame = useCallback((from: number, to: number) => {
+    if (to < 0 || to >= frames.length || from === to) return;
+    pushHistory();
+    setFrames((fs) => {
+      const next = fs.slice();
+      const [f] = next.splice(from, 1);
+      next.splice(to, 0, f);
+      return next;
+    });
+    setFrameIdx(to);
+  }, [frames.length, pushHistory]);
 
   const addSwatch = () => {
     if (swatches.includes(color)) return;
     setSwatches((s) => [...s, color]);
   };
+
+  // Distinct colors currently painted anywhere in the sprite.
+  const usedColors = useMemo(() => {
+    const set = new Set<string>();
+    for (const f of frames) {
+      for (const l of f.layers) {
+        for (const row of l.pixels) {
+          for (const c of row) if (c) set.add(c);
+        }
+      }
+    }
+    return [...set];
+  }, [frames]);
 
   const aiStatus = useMemo<AIStatus>(() => {
     if (proposal?.visible) {
@@ -944,8 +1163,50 @@ function App() {
     };
   };
 
+  // Apply loaded project data and reset editing state (history, dirty flag).
+  const applyProject = useCallback((newFrames: Frame[], w: number, h: number, name: string) => {
+    setFrames(newFrames);
+    setCanvasW(w);
+    setCanvasH(h);
+    setProjectName(name);
+    setFrameIdx(0);
+    setActiveLayerIdx(0);
+    setSelection(null);
+    pastRef.current = [];
+    futureRef.current = [];
+    setDirty(false);
+  }, []);
+
+  const applySprJson = useCallback((json: string, fallbackName: string) => {
+    const data = JSON.parse(json) as { frames: Frame[]; w: number; h: number; name: string };
+    const w = data.w ?? 32, h = data.h ?? 32;
+    applyProject(data.frames, w, h, data.name ?? fallbackName);
+    return { w, h, frameCount: data.frames.length };
+  }, [applyProject]);
+
   const openFile = async () => {
     try {
+      let openedW = canvasW, openedH = canvasH, openedFrameCount = 1;
+
+      if (!IS_TAURI) {
+        // Browser: file picker + local decode. No FS path, so recents get ''.
+        const file = await pickFile('.spr,.png');
+        if (!file) return;
+        const ext = file.name.split('.').pop()?.toLowerCase();
+        if (ext === 'spr') {
+          const meta = applySprJson(await file.text(), file.name);
+          openedW = meta.w; openedH = meta.h; openedFrameCount = meta.frameCount;
+        } else {
+          const result = await decodePngInBrowser(file);
+          openedW = result.w; openedH = result.h;
+          applyProject([frameFromPixels(result.w, result.h, result.pixels)], result.w, result.h, file.name);
+        }
+        pushRecent({ name: file.name, path: '', spec: `${openedW} × ${openedH} · ${openedFrameCount} frame${openedFrameCount !== 1 ? 's' : ''}`, timestamp: Date.now() });
+        setRecentFiles(getRecents());
+        enterEditor();
+        return;
+      }
+
       const selected = await openDialog({
         title: 'Open sprite',
         filters: [{ name: 'Images & sprites', extensions: ['png', 'spr'] }],
@@ -954,31 +1215,17 @@ function App() {
       });
       if (!selected || typeof selected !== 'string') return;
       const ext = selected.split('.').pop()?.toLowerCase();
-      let openedW = canvasW, openedH = canvasH, openedFrameCount = 1;
-      const name = selected.split('/').pop() ?? 'unknown';
+      const name = selected.split(/[/\\]/).pop() ?? 'unknown';
       if (ext === 'spr') {
         const json = await invoke<string>('read_sprite_file', { path: selected });
-        const data = JSON.parse(json) as { frames: Frame[]; w: number; h: number; name: string };
-        openedW = data.w ?? 32;
-        openedH = data.h ?? 32;
-        openedFrameCount = data.frames.length;
-        setFrames(data.frames);
-        setCanvasW(openedW);
-        setCanvasH(openedH);
-        setProjectName(data.name ?? name);
-        setFrameIdx(0);
-        setActiveLayerIdx(0);
+        const meta = applySprJson(json, name);
+        openedW = meta.w; openedH = meta.h; openedFrameCount = meta.frameCount;
+        setCurrentFilePath(selected);
       } else {
         const result = await invoke<{ w: number; h: number; pixels: number[] }>('import_png', { path: selected });
-        openedW = result.w;
-        openedH = result.h;
-        const frame = frameFromPixels(result.w, result.h, result.pixels);
-        setFrames([frame]);
-        setCanvasW(result.w);
-        setCanvasH(result.h);
-        setProjectName(name);
-        setFrameIdx(0);
-        setActiveLayerIdx(0);
+        openedW = result.w; openedH = result.h;
+        applyProject([frameFromPixels(result.w, result.h, result.pixels)], result.w, result.h, name);
+        setCurrentFilePath(null);
       }
       pushRecent({ name, path: selected, spec: `${openedW} × ${openedH} · ${openedFrameCount} frame${openedFrameCount !== 1 ? 's' : ''}`, timestamp: Date.now() });
       setRecentFiles(getRecents());
@@ -989,7 +1236,7 @@ function App() {
   };
 
   const openRecent = async (file: RecentFile) => {
-    if (!file.path) {
+    if (!file.path || !IS_TAURI) {
       enterEditor();
       return;
     }
@@ -997,22 +1244,12 @@ function App() {
       const ext = file.path.split('.').pop()?.toLowerCase();
       if (ext === 'spr') {
         const json = await invoke<string>('read_sprite_file', { path: file.path });
-        const data = JSON.parse(json) as { frames: Frame[]; w: number; h: number; name: string };
-        setFrames(data.frames);
-        setCanvasW(data.w ?? 32);
-        setCanvasH(data.h ?? 32);
-        setProjectName(data.name ?? file.name);
-        setFrameIdx(0);
-        setActiveLayerIdx(0);
+        applySprJson(json, file.name);
+        setCurrentFilePath(file.path);
       } else {
         const result = await invoke<{ w: number; h: number; pixels: number[] }>('import_png', { path: file.path });
-        const frame = frameFromPixels(result.w, result.h, result.pixels);
-        setFrames([frame]);
-        setCanvasW(result.w);
-        setCanvasH(result.h);
-        setProjectName(file.name);
-        setFrameIdx(0);
-        setActiveLayerIdx(0);
+        applyProject([frameFromPixels(result.w, result.h, result.pixels)], result.w, result.h, file.name);
+        setCurrentFilePath(null);
       }
       pushRecent({ name: file.name, path: file.path, spec: file.spec, timestamp: Date.now() });
       setRecentFiles(getRecents());
@@ -1054,6 +1291,13 @@ function App() {
   // ── Save / Save As ─────────────────────────────────────────────────────────
   const saveFile = useCallback(async (forceSaveAs = false) => {
     try {
+      if (!IS_TAURI) {
+        // Browser: download the .spr as a file.
+        const name = projectName.endsWith('.spr') ? projectName : projectName + '.spr';
+        downloadText(JSON.stringify({ w: canvasW, h: canvasH, name, frames }), name);
+        setDirty(false);
+        return;
+      }
       let path = currentFilePath;
       if (!path || forceSaveAs) {
         const defaultName = projectName.endsWith('.spr') ? projectName : projectName + '.spr';
@@ -1066,10 +1310,10 @@ function App() {
         if (!path.endsWith('.spr')) path += '.spr';
       }
       const name = path.split(/[/\\]/).pop() ?? projectName;
-      const content = JSON.stringify({ w: canvasW, h: canvasH, name, frames });
-      await invoke('write_sprite_file', { path, content });
+      await invoke('write_sprite_file', { path, content: JSON.stringify({ w: canvasW, h: canvasH, name, frames }) });
       setCurrentFilePath(path);
       setProjectName(name);
+      setDirty(false);
       pushRecent({ name, path, spec: `${canvasW} × ${canvasH} · ${frames.length} frame${frames.length !== 1 ? 's' : ''}`, timestamp: Date.now() });
       setRecentFiles(getRecents());
     } catch (err) {
@@ -1078,27 +1322,36 @@ function App() {
   }, [currentFilePath, projectName, canvasW, canvasH, frames]);
 
   // ── Export PNG (current frame, composited) ─────────────────────────────────
-  const exportPng = useCallback(async () => {
+  const exportPng = useCallback(async (scale = 1) => {
     try {
       const stem = projectName.replace(/\.spr$/i, '');
       const suffix = frames.length > 1 ? `_f${frameIdx + 1}` : '';
       const defaultName = stem + suffix + '.png';
+      const pixels = compositeFrame(frames[frameIdx]);
+      if (!IS_TAURI) {
+        const bytes = await encodePngInBrowser(pixels, canvasW, canvasH, scale);
+        downloadBytes(bytes, defaultName, 'image/png');
+        return;
+      }
       const path = await saveDialog({
         title: 'Export as PNG',
         filters: [{ name: 'PNG Image', extensions: ['png'] }],
         defaultPath: defaultName,
       });
       if (!path) return;
-      const pixels = compositeFrame(frames[frameIdx]);
-      await invoke('export_png', { path, width: canvasW, height: canvasH, pixels });
+      await invoke('export_png', { path, width: canvasW, height: canvasH, pixels, scale });
     } catch (err) {
       console.error('exportPng failed', err);
     }
   }, [projectName, frames, frameIdx, canvasW, canvasH, compositeFrame]);
 
-  // ── Export animated GIF (all frames) ─────────────────────────────────────
-  const exportGif = useCallback(async () => {
+  // ── Export animated GIF (all frames, per-frame durations) ─────────────────
+  const exportGif = useCallback(async (scale = 1) => {
     try {
+      if (!IS_TAURI) {
+        window.alert('Animated GIF export requires the Sindri desktop app.');
+        return;
+      }
       const stem = projectName.replace(/\.spr$/i, '');
       const path = await saveDialog({
         title: 'Export as animated GIF',
@@ -1107,32 +1360,30 @@ function App() {
       });
       if (!path) return;
       const framePixels = frames.map((f) => compositeFrame(f));
-      const delay = frames[0]?.duration ?? 120;
-      await invoke('export_gif', { path, frames: framePixels, width: canvasW, height: canvasH, delayMs: delay });
+      const delays = frames.map((f) => f.duration ?? 120);
+      await invoke('export_gif', { path, frames: framePixels, width: canvasW, height: canvasH, delaysMs: delays, scale });
     } catch (err) {
       console.error('exportGif failed', err);
     }
   }, [projectName, frames, canvasW, canvasH, compositeFrame]);
 
-  // ── Export sprite sheet (all frames laid out horizontally) ────────────────
-  const exportSpriteSheet = useCallback(async () => {
+  // ── Export sprite sheet (grid layout, configurable columns) ────────────────
+  const exportSpriteSheet = useCallback(async (scale = 1, columns?: number) => {
     try {
       const stem = projectName.replace(/\.spr$/i, '');
-      const path = await saveDialog({
-        title: 'Export sprite sheet',
-        filters: [{ name: 'PNG Image', extensions: ['png'] }],
-        defaultPath: stem + '_sheet.png',
-      });
-      if (!path) return;
-      const cols = frames.length;
+      const cols = Math.max(1, Math.min(columns ?? frames.length, frames.length));
+      const rows = Math.ceil(frames.length / cols);
       const sheetW = canvasW * cols;
-      const sheet = new Array<number>(sheetW * canvasH * 4).fill(0);
+      const sheetH = canvasH * rows;
+      const sheet = new Array<number>(sheetW * sheetH * 4).fill(0);
       frames.forEach((f, fi) => {
         const pixels = compositeFrame(f);
+        const tileX = (fi % cols) * canvasW;
+        const tileY = Math.floor(fi / cols) * canvasH;
         for (let y = 0; y < canvasH; y++) {
           for (let x = 0; x < canvasW; x++) {
             const src = (y * canvasW + x) * 4;
-            const dst = (y * sheetW + fi * canvasW + x) * 4;
+            const dst = ((tileY + y) * sheetW + tileX + x) * 4;
             sheet[dst]     = pixels[src];
             sheet[dst + 1] = pixels[src + 1];
             sheet[dst + 2] = pixels[src + 2];
@@ -1140,11 +1391,69 @@ function App() {
           }
         }
       });
-      await invoke('export_png', { path, width: sheetW, height: canvasH, pixels: sheet });
+      if (!IS_TAURI) {
+        const bytes = await encodePngInBrowser(sheet, sheetW, sheetH, scale);
+        downloadBytes(bytes, stem + '_sheet.png', 'image/png');
+        return;
+      }
+      const path = await saveDialog({
+        title: 'Export sprite sheet',
+        filters: [{ name: 'PNG Image', extensions: ['png'] }],
+        defaultPath: stem + '_sheet.png',
+      });
+      if (!path) return;
+      await invoke('export_png', { path, width: sheetW, height: sheetH, pixels: sheet, scale });
     } catch (err) {
       console.error('exportSpriteSheet failed', err);
     }
   }, [projectName, frames, canvasW, canvasH, compositeFrame]);
+
+  // ── Export modal dispatch ──────────────────────────────────────────────────
+  const [exportModalFor, setExportModalFor] = useState<ExportFormat | null>(null);
+
+  const runExport = useCallback((format: ExportFormat, scale: number, columns: number) => {
+    if (format === 'png') void exportPng(scale);
+    else if (format === 'gif') void exportGif(scale);
+    else void exportSpriteSheet(scale, columns);
+  }, [exportPng, exportGif, exportSpriteSheet]);
+
+  // ── Autosave (crash recovery) ──────────────────────────────────────────────
+  useEffect(() => {
+    if (appStage !== 'editor') return;
+    const id = setTimeout(() => {
+      writeAutosave({
+        savedAt: Date.now(),
+        projectName,
+        path: currentFilePath,
+        w: canvasW,
+        h: canvasH,
+        frames,
+        swatches,
+        dirty,
+      });
+    }, 1200);
+    return () => clearTimeout(id);
+  }, [appStage, frames, canvasW, canvasH, projectName, swatches, currentFilePath, dirty]);
+
+  const [recovery, setRecovery] = useState<AutosaveSnapshot | null>(() => {
+    const snap = readAutosave();
+    return snap && snap.dirty ? snap : null;
+  });
+
+  const recoverAutosave = useCallback(() => {
+    if (!recovery) return;
+    applyProject(recovery.frames as Frame[], recovery.w, recovery.h, recovery.projectName);
+    setSwatches(recovery.swatches ?? SWATCHES);
+    setCurrentFilePath(recovery.path);
+    setDirty(true); // recovered work is unsaved by definition
+    setRecovery(null);
+    enterEditor();
+  }, [recovery, applyProject]);
+
+  const discardAutosave = useCallback(() => {
+    clearAutosave();
+    setRecovery(null);
+  }, []);
 
   // ── Context menu builders ─────────────────────────────────────────────────
   const openCanvasContextMenu = useCallback((x: number, y: number) => {
@@ -1161,8 +1470,10 @@ function App() {
       { type: 'separator' },
       { type: 'action', id: 'ctx-clear-layer',  label: 'Clear layer',        danger: true },
       { type: 'separator' },
-      { type: 'action', id: 'ctx-flip-h',       label: 'Flip horizontal' },
-      { type: 'action', id: 'ctx-flip-v',       label: 'Flip vertical' },
+      { type: 'action', id: 'ctx-flip-h',       label: hasSel ? 'Flip selection horizontal' : 'Flip horizontal' },
+      { type: 'action', id: 'ctx-flip-v',       label: hasSel ? 'Flip selection vertical' : 'Flip vertical' },
+      { type: 'action', id: 'ctx-rotate-cw',    label: hasSel ? 'Rotate selection 90° CW' : 'Rotate canvas 90° CW' },
+      { type: 'action', id: 'ctx-rotate-ccw',   label: hasSel ? 'Rotate selection 90° CCW' : 'Rotate canvas 90° CCW' },
     ];
     setContextMenu({ x, y, items });
   }, [selection, clipboard]);
@@ -1191,6 +1502,9 @@ function App() {
       { type: 'action', id: `ctx-frame-insert-before:${idx}`, label: 'Insert frame before' },
       { type: 'action', id: `ctx-frame-insert-after:${idx}`,  label: 'Insert frame after' },
       { type: 'separator' },
+      { type: 'action', id: `ctx-frame-move-left:${idx}`,  label: 'Move frame left',  disabled: idx <= 0 },
+      { type: 'action', id: `ctx-frame-move-right:${idx}`, label: 'Move frame right', disabled: idx >= frames.length - 1 },
+      { type: 'separator' },
       { type: 'action', id: `ctx-frame-delete:${idx}`,     label: 'Delete frame', disabled: frames.length <= 1, danger: true },
     ];
     setContextMenu({ x, y, items });
@@ -1217,6 +1531,8 @@ function App() {
     if (id === 'ctx-clear-layer')  { clearLayer(); return; }
     if (id === 'ctx-flip-h')       { flipH(); return; }
     if (id === 'ctx-flip-v')       { flipV(); return; }
+    if (id === 'ctx-rotate-cw')    { rotate90(true); return; }
+    if (id === 'ctx-rotate-ccw')   { rotate90(false); return; }
 
     if (id.startsWith('ctx-layer-rename:')) {
       const idx = parseInt(id.split(':')[1]);
@@ -1244,6 +1560,8 @@ function App() {
     if (id.startsWith('ctx-frame-dup:'))           { duplicateFrame(parseInt(id.split(':')[1])); return; }
     if (id.startsWith('ctx-frame-insert-before:')) { insertFrameAt(parseInt(id.split(':')[1])); return; }
     if (id.startsWith('ctx-frame-insert-after:'))  { insertFrameAt(parseInt(id.split(':')[1]) + 1); return; }
+    if (id.startsWith('ctx-frame-move-left:'))     { const i = parseInt(id.split(':')[1]); moveFrame(i, i - 1); return; }
+    if (id.startsWith('ctx-frame-move-right:'))    { const i = parseInt(id.split(':')[1]); moveFrame(i, i + 1); return; }
     if (id.startsWith('ctx-frame-delete:'))        { deleteFrame(parseInt(id.split(':')[1])); return; }
 
     if (id.startsWith('ctx-swatch-use:'))    { setColor(id.slice('ctx-swatch-use:'.length)); return; }
@@ -1256,7 +1574,7 @@ function App() {
       setSwatches((s) => s.filter((c) => c !== col));
       return;
     }
-  }, [closeContextMenu, selectAll, cutSelection, copySelection, pasteClipboard, deleteSelection, clearLayer, flipH, flipV, frames, frameIdx, renameLayer, duplicateLayer, moveLayerUp, moveLayerDown, mergeDown, deleteLayer, duplicateFrame, insertFrameAt, deleteFrame]);
+  }, [closeContextMenu, selectAll, cutSelection, copySelection, pasteClipboard, deleteSelection, clearLayer, flipH, flipV, rotate90, frames, frameIdx, renameLayer, duplicateLayer, moveLayerUp, moveLayerDown, mergeDown, deleteLayer, duplicateFrame, insertFrameAt, moveFrame, deleteFrame]);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   // Placed here so saveFile / exportPng / openFile are already in scope.
@@ -1271,8 +1589,8 @@ function App() {
         const k = e.key.toLowerCase();
         if (k === 'k') { e.preventDefault(); setCmdKOpen(true); return; }
         if (k === 's') { e.preventDefault(); void saveFile(e.shiftKey); return; }
-        if (k === 'e' && !e.shiftKey) { e.preventDefault(); void exportPng(); return; }
-        if (k === 'e' &&  e.shiftKey) { e.preventDefault(); void exportGif(); return; }
+        if (k === 'e' && !e.shiftKey) { e.preventDefault(); setExportModalFor('png'); return; }
+        if (k === 'e' &&  e.shiftKey) { e.preventDefault(); setExportModalFor('gif'); return; }
         if (k === '/')                { e.preventDefault(); setShortcutsOpen(true); return; }
         if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
         if (k === 'z' &&  e.shiftKey) { e.preventDefault(); redo(); return; }
@@ -1299,6 +1617,7 @@ function App() {
       }
 
       // Single-key shortcuts
+      if (e.key === 'Escape') { setSelection(null); return; }
       if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelection(); return; }
       if (e.key === ' ') { e.preventDefault(); setIsPlaying((p) => !p); return; }
       const key = e.key.toLowerCase();
@@ -1351,6 +1670,13 @@ function App() {
           recentFiles={recentFiles}
           savedTemplates={savedTemplates}
           onOpenRecent={openRecent}
+          recovery={recovery ? {
+            name: recovery.projectName,
+            savedAt: recovery.savedAt,
+            spec: `${recovery.w} × ${recovery.h} · ${recovery.frames.length} frame${recovery.frames.length !== 1 ? 's' : ''}`,
+          } : null}
+          onRecover={recoverAutosave}
+          onDiscardRecovery={discardAutosave}
         />
         <NewProjectModal
           open={!!newProjectFor}
@@ -1380,11 +1706,11 @@ function App() {
           onStop={() => { setIsPlaying(false); setFrameIdx(0); }}
           frameIdx={frameIdx}
           frameCount={frames.length}
-          projectName={projectName}
+          projectName={dirty ? `${projectName} •` : projectName}
           maximized={maximized}
-          onMinimize={() => void getCurrentWindow().minimize()}
-          onToggleMax={() => { void getCurrentWindow().toggleMaximize(); setMaximized((m) => !m); }}
-          onClose={() => void getCurrentWindow().close()}
+          onMinimize={() => { if (IS_TAURI) void getCurrentWindow().minimize(); }}
+          onToggleMax={() => { if (IS_TAURI) { void getCurrentWindow().toggleMaximize(); setMaximized((m) => !m); } }}
+          onClose={() => { if (IS_TAURI) void getCurrentWindow().close(); }}
           onOpenLessons={() => setTweak('tutorialMode', 'library')}
           onOpenMenu={(rect: DOMRect) => setAppMenu({ anchorRect: rect, tab: 'file' })}
 
@@ -1421,7 +1747,9 @@ function App() {
           <ToolsPane
             tool={tool} onToolChange={setTool}
             helper={helper} onHelperChange={(h) => setHelper(h as ViewHelper)}
-            modifiers={modifiers} onModifierToggle={(k) => setModifiers((m) => ({ ...m, [k]: !m[k] }))}
+            modifiers={modifiers}
+            onModifierToggle={(k) => { if (k === 'tile') setModifiers((m) => ({ ...m, tile: !m.tile })); }}
+            onSymmetryChange={(mode: SymmetryMode) => setModifiers((m) => ({ ...m, symmetry: mode }))}
             toolOptions={toolOptions} onToolOptionChange={(k, v) => setToolOptions((o) => ({ ...o, [k]: v }))}
             activeTab={leftTab} onTabChange={setLeftTab}
           />
@@ -1529,8 +1857,10 @@ function App() {
             onRenameLayer={renameLayer} onLayerContextMenu={openLayerContextMenu}
             color={color} onColorChange={setColor}
             swatches={swatches} onAddSwatch={addSwatch} onSwatchContextMenu={openSwatchContextMenu}
+            usedColors={usedColors}
             frameIdx={frameIdx} frameCount={frames.length}
             frameDuration={frames[frameIdx]?.duration ?? 120} onSetFrameDuration={setFrameDuration}
+            onApplyDurationToAll={applyDurationToAll}
             canvasW={canvasW} canvasH={canvasH}
             proposal={proposal}
             onAcceptProposal={acceptProposal}
@@ -1565,9 +1895,9 @@ function App() {
           else if (id === 'import')         void openFile();
           else if (id === 'save')           void saveFile(false);
           else if (id === 'save-as')        void saveFile(true);
-          else if (id === 'export-png')     void exportPng();
-          else if (id === 'export-gif')     void exportGif();
-          else if (id === 'export-sheet')   void exportSpriteSheet();
+          else if (id === 'export-png')     setExportModalFor('png');
+          else if (id === 'export-gif')     setExportModalFor('gif');
+          else if (id === 'export-sheet')   setExportModalFor('sheet');
           else if (id === 'shortcuts')      setShortcutsOpen(true);
           else if (id === 'undo')           undo();
           else if (id === 'redo')           redo();
@@ -1585,6 +1915,8 @@ function App() {
           }
           else if (id === 'flip-h')         flipH();
           else if (id === 'flip-v')         flipV();
+          else if (id === 'rotate-cw')      rotate90(true);
+          else if (id === 'rotate-ccw')     rotate90(false);
           else if (id === 'lessons')        setTweak('tutorialMode', 'library');
           else if (id === 'create-lesson')  setTweak('tutorialMode', 'authoring');
           else if (id === 'ask-sindri')     setCmdKOpen(true);
@@ -1635,6 +1967,16 @@ function App() {
         currentH={canvasH}
         onClose={() => setResizeModalOpen(false)}
         onResize={resizeCanvas}
+      />
+
+      <ExportModal
+        open={!!exportModalFor}
+        format={exportModalFor ?? 'png'}
+        frameCount={frames.length}
+        canvasW={canvasW}
+        canvasH={canvasH}
+        onClose={() => setExportModalFor(null)}
+        onExport={runExport}
       />
 
       <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />

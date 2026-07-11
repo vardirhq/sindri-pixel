@@ -139,7 +139,9 @@ export function Timeline({
     <div style={tlStyles.root} data-spotlight="timeline">
       <div style={tlStyles.head}>
         <span style={tlStyles.title}>timeline</span>
-        <span style={tlStyles.meta}>{frames.length} frames · {(1000 / (frames[0]?.duration || 120)).toFixed(1)} fps · loop</span>
+        <span style={tlStyles.meta}>
+          {frames.length} frames · {(1000 / Math.max(1, frames.reduce((s, f) => s + (f.duration || 120), 0) / frames.length)).toFixed(1)} fps avg · loop
+        </span>
         <div style={tlStyles.actions}>
           <span style={tlStyles.btn(showOnionSkin)} onClick={onToggleOnionSkin} title="Toggle onion skin">
             <IconOnion size={11} stroke={showOnionSkin ? 'var(--ink)' : 'var(--ink-3)'}/>
@@ -162,7 +164,7 @@ export function Timeline({
               <div style={tlStyles.thumbBox(active, false)}>
                 <FrameThumb frame={f}/>
               </div>
-              <span style={tlStyles.fnum(active, false)}>{String(i + 1).padStart(2, '0')}</span>
+              <span style={tlStyles.fnum(active, false)}>{String(i + 1).padStart(2, '0')} · {f.duration}ms</span>
             </div>
           );
         })}

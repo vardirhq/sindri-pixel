@@ -79,3 +79,41 @@ export function deleteTemplate(id: string): void {
   const existing = load<SavedTemplate>(TEMPLATE_KEY);
   save(TEMPLATE_KEY, existing.filter((t) => t.id !== id));
 }
+
+// ── Autosave / crash recovery ─────────────────────────────────────────────────
+
+const AUTOSAVE_KEY = 'sindri_autosave';
+
+export interface AutosaveSnapshot {
+  savedAt: number;
+  projectName: string;
+  path: string | null;
+  w: number;
+  h: number;
+  // Frames are stored as opaque JSON — typed by the caller on restore.
+  frames: unknown[];
+  swatches: string[];
+  dirty: boolean;
+}
+
+export function writeAutosave(snap: AutosaveSnapshot): void {
+  try {
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(snap));
+  } catch { /* storage full — silently skip */ }
+}
+
+export function readAutosave(): AutosaveSnapshot | null {
+  try {
+    const raw = localStorage.getItem(AUTOSAVE_KEY);
+    if (!raw) return null;
+    const snap = JSON.parse(raw) as AutosaveSnapshot;
+    if (!snap || !Array.isArray(snap.frames) || snap.frames.length === 0) return null;
+    return snap;
+  } catch {
+    return null;
+  }
+}
+
+export function clearAutosave(): void {
+  try { localStorage.removeItem(AUTOSAVE_KEY); } catch { /* ignore */ }
+}
