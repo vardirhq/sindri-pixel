@@ -22,10 +22,7 @@ fn checked_rgba_len(width: u32, height: u32) -> Result<usize, String> {
 }
 
 fn validate_project_dimensions(width: u32, height: u32) -> Result<(), String> {
-    if width == 0
-        || height == 0
-        || width > MAX_PROJECT_DIMENSION
-        || height > MAX_PROJECT_DIMENSION
+    if width == 0 || height == 0 || width > MAX_PROJECT_DIMENSION || height > MAX_PROJECT_DIMENSION
     {
         return Err(format!(
             "imported images must be between 1 and {MAX_PROJECT_DIMENSION} pixels per side"
@@ -67,11 +64,7 @@ fn atomic_write(path: &std::path::Path, content: &[u8]) -> Result<(), String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_nanos();
-    let temporary = parent.join(format!(
-        ".{file_name}.{}.{}.tmp",
-        std::process::id(),
-        nonce
-    ));
+    let temporary = parent.join(format!(".{file_name}.{}.{}.tmp", std::process::id(), nonce));
 
     let result = (|| -> Result<(), String> {
         let mut file = OpenOptions::new()
@@ -79,8 +72,7 @@ fn atomic_write(path: &std::path::Path, content: &[u8]) -> Result<(), String> {
             .create_new(true)
             .open(&temporary)
             .map_err(|error| error.to_string())?;
-        file.write_all(content)
-            .map_err(|error| error.to_string())?;
+        file.write_all(content).map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
 
@@ -188,7 +180,9 @@ pub async fn export_png(
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
-    writer.write_image_data(&scaled).map_err(|e| e.to_string())?;
+    writer
+        .write_image_data(&scaled)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -230,8 +224,8 @@ pub async fn export_gif(
     let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
     let buf = BufWriter::new(file);
     // Empty global palette — each frame carries its own local palette
-    let mut encoder = Encoder::new(buf, out_w as u16, out_h as u16, &[])
-        .map_err(|e| e.to_string())?;
+    let mut encoder =
+        Encoder::new(buf, out_w as u16, out_h as u16, &[]).map_err(|e| e.to_string())?;
     encoder
         .set_repeat(Repeat::Infinite)
         .map_err(|e| e.to_string())?;
@@ -303,10 +297,7 @@ pub async fn import_png(path: String) -> Result<serde_json::Value, String> {
             if c[3] == 0 {
                 0u32
             } else {
-                ((c[0] as u32) << 16)
-                    | ((c[1] as u32) << 8)
-                    | (c[2] as u32)
-                    | 0xFF00_0000u32
+                ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | (c[2] as u32) | 0xFF00_0000u32
             }
         })
         .collect();
@@ -324,8 +315,8 @@ mod tests {
         assert_eq!(
             scaled,
             vec![
-                255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
-                255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+                255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 255, 0, 0, 255,
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
             ]
         );
     }
@@ -360,10 +351,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(
-            std::fs::read_to_string(path).unwrap(),
-            "{\"version\":2}"
-        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "{\"version\":2}");
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
