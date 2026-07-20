@@ -23,6 +23,8 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getRecents, pushRecent, getSavedTemplates, saveTemplate, readAutosave, writeAutosave, clearAutosave } from './lib/storage';
 import type { RecentFile, SavedTemplate, AutosaveSnapshot } from './lib/storage';
 import { IS_TAURI, downloadBytes, downloadText, pickFile, encodePngInBrowser, decodePngInBrowser } from './lib/platform';
+import { parseProject, serializeProject } from './lib/project-format';
+import { buildSpriteSheet, compositeFrame as compositeSpriteFrame, frameFromPackedPixels } from './lib/sprite';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1145,30 +1147,13 @@ function App() {
   const rejectProposal = () => setProposal(null);
   const refineProposal = () => { setCmdKOpen(true); };
 
-  const frameFromPixels = (w: number, h: number, pixelInts: number[]): Frame => {
-    const pixels = Array.from({ length: h }, (_, y) =>
-      Array.from({ length: w }, (_, x) => {
-        const v = pixelInts[y * w + x];
-        if (!v || (v >>> 24) === 0) return null;
-        const r = (v >> 16) & 0xFF;
-        const g = (v >> 8) & 0xFF;
-        const b = v & 0xFF;
-        return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-      })
-    );
-    return {
-      id: 'frame_0',
-      duration: 120,
-      layers: [{ id: 'l0', name: 'layer 1', visible: true, opacity: 1, pixels }],
-    };
-  };
-
   // Apply loaded project data and reset editing state (history, dirty flag).
-  const applyProject = useCallback((newFrames: Frame[], w: number, h: number, name: string) => {
+  const applyProject = useCallback((newFrames: Frame[], w: number, h: number, name: string, projectSwatches?: string[]) => {
     setFrames(newFrames);
     setCanvasW(w);
     setCanvasH(h);
     setProjectName(name);
+    if (projectSwatches?.length) setSwatches(projectSwatches);
     setFrameIdx(0);
     setActiveLayerIdx(0);
     setSelection(null);
@@ -1178,10 +1163,9 @@ function App() {
   }, []);
 
   const applySprJson = useCallback((json: string, fallbackName: string) => {
-    const data = JSON.parse(json) as { frames: Frame[]; w: number; h: number; name: string };
-    const w = data.w ?? 32, h = data.h ?? 32;
-    applyProject(data.frames, w, h, data.name ?? fallbackName);
-    return { w, h, frameCount: data.frames.length };
+    const data = parseProject(json, fallbackName);
+    applyProject(data.frames, data.w, data.h, data.name, data.swatches);
+    return { w: data.w, h: data.h, frameCount: data.frames.length };
   }, [applyProject]);
 
   const openFile = async () => {
@@ -1199,7 +1183,7 @@ function App() {
         } else {
           const result = await decodePngInBrowser(file);
           openedW = result.w; openedH = result.h;
-          applyProject([frameFromPixels(result.w, result.h, result.pixels)], result.w, result.h, file.name);
+          applyProject([frameFromPackedPixels(result.w, result.h, result.pixels)], result.w, result.h, file.name);
         }
         pushRecent({ name: file.name, path: '', spec: `${openedW} × ${openedH} · ${openedFrameCount} frame${openedFrameCount !== 1 ? 's' : ''}`, timestamp: Date.now() });
         setRecentFiles(getRecents());
@@ -1224,7 +1208,7 @@ function App() {
       } else {
         const result = await invoke<{ w: number; h: number; pixels: number[] }>('import_png', { path: selected });
         openedW = result.w; openedH = result.h;
-        applyProject([frameFromPixels(result.w, result.h, result.pixels)], result.w, result.h, name);
+        applyProject([frameFromPackedPixels(result.w, result.h, result.pixels)], result.w, result.h, name);
         setCurrentFilePath(null);
       }
       pushRecent({ name, path: selected, spec: `${openedW} × ${openedH} · ${openedFrameCount} frame${openedFrameCount !== 1 ? 's' : ''}`, timestamp: Date.now() });
@@ -1232,6 +1216,7 @@ function App() {
       enterEditor();
     } catch (e) {
       console.error('openFile failed', e);
+      window.alert(e instanceof Error ? e.message : 'Could not open that file.');
     }
   };
 
@@ -1248,7 +1233,7 @@ function App() {
         setCurrentFilePath(file.path);
       } else {
         const result = await invoke<{ w: number; h: number; pixels: number[] }>('import_png', { path: file.path });
-        applyProject([frameFromPixels(result.w, result.h, result.pixels)], result.w, result.h, file.name);
+        applyProject([frameFromPackedPixels(result.w, result.h, result.pixels)], result.w, result.h, file.name);
         setCurrentFilePath(null);
       }
       pushRecent({ name: file.name, path: file.path, spec: file.spec, timestamp: Date.now() });
@@ -1256,36 +1241,14 @@ function App() {
       enterEditor();
     } catch (e) {
       console.error('openRecent failed', e);
+      window.alert(e instanceof Error ? e.message : 'Could not reopen that file.');
       enterEditor();
     }
   };
 
   // ── Composite a single frame (all visible layers) → flat RGBA bytes ────────
   const compositeFrame = useCallback((frameData: Frame): number[] => {
-    const out = new Array<number>(canvasW * canvasH * 4).fill(0);
-    for (const layer of frameData.layers) {
-      if (!layer.visible) continue;
-      for (let y = 0; y < canvasH; y++) {
-        for (let x = 0; x < canvasW; x++) {
-          const col = layer.pixels[y][x];
-          if (!col) continue;
-          const sr = parseInt(col.slice(1, 3), 16);
-          const sg = parseInt(col.slice(3, 5), 16);
-          const sb = parseInt(col.slice(5, 7), 16);
-          const sa = layer.opacity;
-          const i = (y * canvasW + x) * 4;
-          const da = out[i + 3] / 255;
-          const oa = sa + da * (1 - sa);
-          if (oa > 0) {
-            out[i]     = Math.round((sr * sa + out[i]     * da * (1 - sa)) / oa);
-            out[i + 1] = Math.round((sg * sa + out[i + 1] * da * (1 - sa)) / oa);
-            out[i + 2] = Math.round((sb * sa + out[i + 2] * da * (1 - sa)) / oa);
-            out[i + 3] = Math.round(oa * 255);
-          }
-        }
-      }
-    }
-    return out;
+    return compositeSpriteFrame(frameData, canvasW, canvasH);
   }, [canvasW, canvasH]);
 
   // ── Save / Save As ─────────────────────────────────────────────────────────
@@ -1294,7 +1257,7 @@ function App() {
       if (!IS_TAURI) {
         // Browser: download the .spr as a file.
         const name = projectName.endsWith('.spr') ? projectName : projectName + '.spr';
-        downloadText(JSON.stringify({ w: canvasW, h: canvasH, name, frames }), name);
+        downloadText(serializeProject({ w: canvasW, h: canvasH, name, frames, swatches }), name);
         setDirty(false);
         return;
       }
@@ -1310,7 +1273,7 @@ function App() {
         if (!path.endsWith('.spr')) path += '.spr';
       }
       const name = path.split(/[/\\]/).pop() ?? projectName;
-      await invoke('write_sprite_file', { path, content: JSON.stringify({ w: canvasW, h: canvasH, name, frames }) });
+      await invoke('write_sprite_file', { path, content: serializeProject({ w: canvasW, h: canvasH, name, frames, swatches }) });
       setCurrentFilePath(path);
       setProjectName(name);
       setDirty(false);
@@ -1318,8 +1281,9 @@ function App() {
       setRecentFiles(getRecents());
     } catch (err) {
       console.error('saveFile failed', err);
+      window.alert(err instanceof Error ? err.message : 'Could not save the project.');
     }
-  }, [currentFilePath, projectName, canvasW, canvasH, frames]);
+  }, [currentFilePath, projectName, canvasW, canvasH, frames, swatches]);
 
   // ── Export PNG (current frame, composited) ─────────────────────────────────
   const exportPng = useCallback(async (scale = 1) => {
@@ -1342,6 +1306,7 @@ function App() {
       await invoke('export_png', { path, width: canvasW, height: canvasH, pixels, scale });
     } catch (err) {
       console.error('exportPng failed', err);
+      window.alert(err instanceof Error ? err.message : 'Could not export the PNG.');
     }
   }, [projectName, frames, frameIdx, canvasW, canvasH, compositeFrame]);
 
@@ -1364,6 +1329,7 @@ function App() {
       await invoke('export_gif', { path, frames: framePixels, width: canvasW, height: canvasH, delaysMs: delays, scale });
     } catch (err) {
       console.error('exportGif failed', err);
+      window.alert(err instanceof Error ? err.message : 'Could not export the animated GIF.');
     }
   }, [projectName, frames, canvasW, canvasH, compositeFrame]);
 
@@ -1371,28 +1337,9 @@ function App() {
   const exportSpriteSheet = useCallback(async (scale = 1, columns?: number) => {
     try {
       const stem = projectName.replace(/\.spr$/i, '');
-      const cols = Math.max(1, Math.min(columns ?? frames.length, frames.length));
-      const rows = Math.ceil(frames.length / cols);
-      const sheetW = canvasW * cols;
-      const sheetH = canvasH * rows;
-      const sheet = new Array<number>(sheetW * sheetH * 4).fill(0);
-      frames.forEach((f, fi) => {
-        const pixels = compositeFrame(f);
-        const tileX = (fi % cols) * canvasW;
-        const tileY = Math.floor(fi / cols) * canvasH;
-        for (let y = 0; y < canvasH; y++) {
-          for (let x = 0; x < canvasW; x++) {
-            const src = (y * canvasW + x) * 4;
-            const dst = ((tileY + y) * sheetW + tileX + x) * 4;
-            sheet[dst]     = pixels[src];
-            sheet[dst + 1] = pixels[src + 1];
-            sheet[dst + 2] = pixels[src + 2];
-            sheet[dst + 3] = pixels[src + 3];
-          }
-        }
-      });
+      const sheet = buildSpriteSheet(frames, canvasW, canvasH, columns ?? frames.length);
       if (!IS_TAURI) {
-        const bytes = await encodePngInBrowser(sheet, sheetW, sheetH, scale);
+        const bytes = await encodePngInBrowser(sheet.pixels, sheet.width, sheet.height, scale);
         downloadBytes(bytes, stem + '_sheet.png', 'image/png');
         return;
       }
@@ -1402,11 +1349,12 @@ function App() {
         defaultPath: stem + '_sheet.png',
       });
       if (!path) return;
-      await invoke('export_png', { path, width: sheetW, height: sheetH, pixels: sheet, scale });
+      await invoke('export_png', { path, width: sheet.width, height: sheet.height, pixels: sheet.pixels, scale });
     } catch (err) {
       console.error('exportSpriteSheet failed', err);
+      window.alert(err instanceof Error ? err.message : 'Could not export the sprite sheet.');
     }
-  }, [projectName, frames, canvasW, canvasH, compositeFrame]);
+  }, [projectName, frames, canvasW, canvasH]);
 
   // ── Export modal dispatch ──────────────────────────────────────────────────
   const [exportModalFor, setExportModalFor] = useState<ExportFormat | null>(null);

@@ -24,6 +24,10 @@ The design ethos is deliberately **local-first and AI-as-peer**: your files live
 
 > The default project greets you with a 4-frame hover-bob animation of a patrol drone on a 32×32 canvas — a working example of every core feature the moment you open the app.
 
+### Release status
+
+Sindri Pixel is preparing its first cross-platform beta. Native Linux, macOS, and Windows bundles are built and tested by GitHub Actions; tagged builds are published on the [Releases](https://github.com/vardirhq/sindri-pixel/releases) page with SHA-256 checksums. Beta builds are currently unsigned, so operating systems may show an unverified-publisher warning.
+
 ---
 
 ## Highlights
@@ -140,6 +144,10 @@ Tool options include brush size, filled vs. outlined shapes, "perfect" shape sna
 
 Projects save to a `.spr` file — a plain, human-readable JSON document describing frames, layers, and palette, so your work is never locked behind a binary format.
 
+The format is versioned from `v1`. Current releases still open the original unversioned `.spr` files and save them back in the versioned form. Files created by a newer unsupported format version are rejected rather than guessed at or partially loaded.
+
+Coming from the archived Dream Pixel Editor? See [Migrating from Dream Pixel Editor](docs/migrating-from-dream-pixel.md).
+
 ---
 
 ## Architecture
@@ -161,6 +169,8 @@ sindri-pixel/
 │   │   └── Welcome.tsx       # welcome screen, new-project wizard, recovery
 │   ├── lib/
 │   │   ├── platform.ts       # Tauri detection + browser fallbacks
+│   │   ├── project-format.ts # versioned .spr parsing, migration & validation
+│   │   ├── sprite.ts         # compositing and sprite-sheet layout
 │   │   └── storage.ts        # recents, templates & autosave (localStorage)
 │   └── styles/tokens.css     # the Sindri design system (color + type)
 │
@@ -180,6 +190,8 @@ sindri-pixel/
 
 When Tauri isn't available, `src/lib/platform.ts` transparently substitutes canvas-based encoders and browser file pickers so the same UI keeps working on the web.
 
+Project writes use a temporary file and atomic replacement so an interrupted save does not truncate the existing project. The Rust export boundary validates dimensions, scaling, frame counts, and pixel-buffer lengths before allocating or encoding output.
+
 ---
 
 ## Tech Stack
@@ -189,11 +201,20 @@ When Tauri isn't available, `src/lib/platform.ts` transparently substitutes canv
 - **[Vite 5](https://vitejs.dev)** — dev server and build tooling
 - **[Rust](https://www.rust-lang.org)** — `png` and `gif` crates for encoding, `tokio` for async file I/O
 
+Run the release checks locally with:
+
+```bash
+pnpm check
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+```
+
 ---
 
 ## Roadmap
 
-Sindri Pixel is an early preview (`v0.1.0`). The foundations — drawing, layers, animation, export, lessons, and the AI compose surface — are in place and evolving. Contributions, ideas, and bug reports are welcome.
+Sindri Pixel `v0.2.0-beta.1` is a release-readiness beta. The editor feature set is in place; current work prioritizes file safety, export correctness, native packaging, compatibility, and real workflow testing over adding more tools.
 
 ---
 

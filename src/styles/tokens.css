@@ -10,8 +10,6 @@
  *   - pixel-feel display type (Pixelify Sans) + JetBrains Mono for code
  */
 
-@import url("https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&family=VT323&family=JetBrains+Mono:wght@400;500;600&display=swap");
-
 :root {
   /* ─── color foundations ─────────────────────────────────── */
   --paper:   #0d1117;
