@@ -1,6 +1,6 @@
 {
   "productName": "Sindri Pixel",
-  "version": "0.2.0-beta.1",
+  "version": "0.2.0-1",
   "identifier": "dev.sindri.pixel",
   "build": {
     "beforeDevCommand": "pnpm dev",
