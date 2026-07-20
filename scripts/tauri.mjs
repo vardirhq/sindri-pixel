@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
-const tauriBin = join(
+const tauriCli = join(
   projectRoot,
   "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tauri.cmd" : "tauri",
+  "@tauri-apps",
+  "cli",
+  "tauri.js",
 );
 
 const env = { ...process.env };
@@ -23,7 +24,7 @@ if (isWayland && env.WEBKIT_DISABLE_DMABUF_RENDERER === undefined) {
   );
 }
 
-const child = spawn(tauriBin, process.argv.slice(2), {
+const child = spawn(process.execPath, [tauriCli, ...process.argv.slice(2)], {
   cwd: projectRoot,
   env,
   stdio: "inherit",
