@@ -52,6 +52,12 @@ export function reconstructPixelArt(
     detection.gridWidth,
     detection.gridHeight,
     options.transparentBackground,
+    {
+      cellWidth: detection.cellWidth,
+      cellHeight: detection.cellHeight,
+      offsetX: detection.offsetX,
+      offsetY: detection.offsetY,
+    },
   );
 
   // 3. Palette quantization.

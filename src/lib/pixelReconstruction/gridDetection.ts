@@ -21,6 +21,7 @@
 // implausibly large sprite is capped to a usable resolution.
 
 import { luminance } from './color';
+import { axisBoundaries } from './cellSampling';
 import {
   MAX_CELL_SIZE,
   MAX_OUTPUT_SIZE,
@@ -28,6 +29,9 @@ import {
   type GridDetectionResult,
   type RGBAImage,
 } from './types';
+
+// A grid this regular is treated as rigid: worth sub-pixel cell + phase fitting.
+const RIGID_REGULARITY = 0.8;
 
 // When detection is not confident, distrust very fine grids: a sprite this
 // large from a weak signal is almost always texture, so cap the longer side to
@@ -297,8 +301,7 @@ function boxCellVariance(lum: Float32Array, width: number, box: Box, cell: numbe
  * grid (the fabric-texture case) barely changes. Measured over the content
  * bounding box so a flat background does not dilute it. Returned in ~[0, 1].
  */
-function gridClarity(lum: Float32Array, width: number, height: number, cell: number): number {
-  const box = contentBox(lum, width, height);
+function gridClarity(lum: Float32Array, width: number, box: Box, cell: number): number {
   const vCell = boxCellVariance(lum, width, box, cell);
   const vDouble = boxCellVariance(lum, width, box, Math.min(MAX_CELL_SIZE, cell * 2));
   const ratio = vDouble / Math.max(vCell, 1e-3);
@@ -326,8 +329,46 @@ function reconcilePeriod(signal: Float32Array, base: PeakEstimate): PeakEstimate
   return base;
 }
 
+/**
+ * Sub-pixel refinement for a rigid grid: search cell size near `coarse` and the
+ * grid-line phase to maximize comb alignment — mean edge energy *on* grid lines
+ * vs *off* them. Recovers the exact cell size and the offset of the first grid
+ * line, so sampling lands on the source's real pixel boundaries instead of
+ * assuming the grid starts at 0 (a small offset otherwise smears fine detail).
+ */
+function fitAxis(signal: Float32Array, coarse: number): { cell: number; offset: number } {
+  const n = signal.length;
+  let total = 0;
+  for (let i = 0; i < n; i++) total += signal[i];
+  if (total <= 0) return { cell: coarse, offset: 0 };
+
+  const lo = Math.max(MIN_CELL_SIZE, coarse - 1.5);
+  const hi = Math.min(MAX_CELL_SIZE, coarse + 1.5);
+  let best = { cell: coarse, offset: 0, score: -1 };
+  for (let p = lo; p <= hi; p += 0.05) {
+    for (let ph = 0; ph < p; ph += 0.25) {
+      let on = 0;
+      let cnt = 0;
+      for (let pos = ph; pos < n - 0.5; pos += p) {
+        on += signal[Math.round(pos)];
+        cnt++;
+      }
+      if (cnt === 0 || cnt >= n) continue;
+      const offMean = (total - on) / (n - cnt);
+      const score = on / cnt / Math.max(offMean, 1e-6);
+      if (score > best.score) best = { cell: p, offset: ph, score };
+    }
+  }
+  return { cell: best.cell, offset: best.offset };
+}
+
 function clampInt(value: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(value)));
+}
+
+/** Cell count for a phased axis grid. */
+function axisGridCount(length: number, cell: number, offset: number): number {
+  return Math.max(1, axisBoundaries(length, cell, offset).length - 1);
 }
 
 function downgrade(c: Confidence): Confidence {
@@ -342,8 +383,10 @@ export function gridFromTarget(
 ): GridDetectionResult {
   const gridWidth = clampInt(targetWidth, 1, MAX_OUTPUT_SIZE);
   const gridHeight = clampInt(targetHeight, 1, MAX_OUTPUT_SIZE);
-  const cellSize = (image.width / gridWidth + image.height / gridHeight) / 2;
-  return { cellSize, gridWidth, gridHeight, confidence: 'high' };
+  const cellWidth = image.width / gridWidth;
+  const cellHeight = image.height / gridHeight;
+  const cellSize = (cellWidth + cellHeight) / 2;
+  return { cellSize, gridWidth, gridHeight, confidence: 'high', cellWidth, cellHeight, offsetX: 0, offsetY: 0 };
 }
 
 /**
@@ -358,6 +401,12 @@ export function detectGrid(image: RGBAImage): GridDetectionResult {
   const lum = toLuminance(image);
   const rowSig = rowEdgeSignal(lum, width, height);
   const colSig = colEdgeSignal(lum, width, height);
+  const box = contentBox(lum, width, height);
+  // A sprite inset from the image edges has a real grid phase to recover;
+  // full-frame art (texture, benchmark tiles) starts at 0 and must not be
+  // sub-pixel-fitted (that would destabilize the robust median estimate).
+  const marginX = box.x0 > 2 || box.x1 < width - 2;
+  const marginY = box.y0 > 2 || box.y1 < height - 2;
 
   const rowPk = peakSpacingAxis(rowSig, MIN_CELL_SIZE, MAX_CELL_SIZE);
   const colPk = peakSpacingAxis(colSig, MIN_CELL_SIZE, MAX_CELL_SIZE);
@@ -371,29 +420,46 @@ export function detectGrid(image: RGBAImage): GridDetectionResult {
 
   // Period per axis: prefer the jitter-robust peak spacing; fall back to
   // autocorrelation when too few peaks were found.
-  const cellH = rowRec.period > 0 ? rowRec.period : rowAc.period;
-  const cellW = colRec.period > 0 ? colRec.period : colAc.period;
+  const baseH = rowRec.period > 0 ? rowRec.period : rowAc.period;
+  const baseW = colRec.period > 0 ? colRec.period : colAc.period;
 
   const regularity = (rowRec.regularity + colRec.regularity) / 2;
   const acStrength = (rowAc.strength + colAc.strength) / 2;
 
+  // Sub-pixel cell size + grid-line phase for rigid axes; jittered axes keep the
+  // median period at phase 0 (no single exact cell to fit).
+  let cellW = baseW;
+  let cellH = baseH;
+  let offsetX = 0;
+  let offsetY = 0;
+  if (marginX && colRec.regularity >= RIGID_REGULARITY) {
+    const f = fitAxis(colSig, baseW);
+    cellW = f.cell;
+    offsetX = f.offset;
+  }
+  if (marginY && rowRec.regularity >= RIGID_REGULARITY) {
+    const f = fitAxis(rowSig, baseH);
+    cellH = f.cell;
+    offsetY = f.offset;
+  }
+
   const larger = Math.max(cellW, cellH);
   const smaller = Math.min(cellW, cellH);
   const divergence = larger > 0 ? (larger - smaller) / larger : 1;
-
-  let cellSize: number;
-  if (divergence <= 0.15) {
-    cellSize = (cellW + cellH) / 2;
-  } else {
-    // Axes disagree — trust the more regular one and flag lower confidence.
-    cellSize = colRec.regularity >= rowRec.regularity ? cellW : cellH;
-  }
-  cellSize = Math.max(MIN_CELL_SIZE, Math.min(MAX_CELL_SIZE, cellSize));
+  // Scalar cell used for non-phased grid counts: average when the axes agree,
+  // otherwise the more regular axis.
+  const cellSize = Math.max(
+    MIN_CELL_SIZE,
+    Math.min(
+      MAX_CELL_SIZE,
+      divergence <= 0.15 ? (cellW + cellH) / 2 : colRec.regularity >= rowRec.regularity ? cellW : cellH,
+    ),
+  );
 
   // Grid clarity: does the detected cell mark a real grid (variance jumps when
   // coarsening past it) or just a slice of smooth detail (no jump)? This is what
   // separates a genuine sprite grid from regular fabric/mesh texture.
-  const clarity = gridClarity(lum, width, height, cellSize);
+  const clarity = gridClarity(lum, width, box, cellSize);
 
   let confidence: Confidence;
   if (regularity >= 0.7 && clarity >= 0.5 && divergence <= 0.15) {
@@ -405,8 +471,23 @@ export function detectGrid(image: RGBAImage): GridDetectionResult {
   }
   if (divergence > 0.15) confidence = downgrade(confidence);
 
-  let gridWidth = clampInt(width / cellSize, 1, MAX_OUTPUT_SIZE);
-  let gridHeight = clampInt(height / cellSize, 1, MAX_OUTPUT_SIZE);
+  // With no phase, use exact equal division (round of width/cell) so the grid
+  // count is stable. With a phase, tile from the offset (edge cells may be
+  // partial background).
+  let gridWidth: number;
+  let gridHeight: number;
+  if (offsetX === 0) {
+    gridWidth = clampInt(width / cellSize, 1, MAX_OUTPUT_SIZE);
+    cellW = width / gridWidth;
+  } else {
+    gridWidth = clampInt(axisGridCount(width, cellW, offsetX), 1, MAX_OUTPUT_SIZE);
+  }
+  if (offsetY === 0) {
+    gridHeight = clampInt(height / cellSize, 1, MAX_OUTPUT_SIZE);
+    cellH = height / gridHeight;
+  } else {
+    gridHeight = clampInt(axisGridCount(height, cellH, offsetY), 1, MAX_OUTPUT_SIZE);
+  }
 
   // A large grid from anything but a confident, regular signal is the signature
   // of sub-cell texture rather than an art grid.
@@ -414,15 +495,29 @@ export function detectGrid(image: RGBAImage): GridDetectionResult {
     confidence = 'low';
   }
 
-  // Size-sanity cap: don't hand back a "sprite" that is really a downscale when
-  // we don't fully trust the estimate. Preserve aspect ratio; the user can
-  // override upward to the finer grid.
-  if (confidence !== 'high' && Math.max(gridWidth, gridHeight) > SOFT_MAX_GRID) {
-    const scale = SOFT_MAX_GRID / Math.max(gridWidth, gridHeight);
+  // Size-sanity cap: when we don't fully trust an oversized estimate (or it
+  // simply exceeds the output limit), fall back to an equal-division grid at a
+  // usable resolution, preserving aspect ratio.
+  const oversized = Math.max(gridWidth, gridHeight) > MAX_OUTPUT_SIZE;
+  if (oversized || (confidence !== 'high' && Math.max(gridWidth, gridHeight) > SOFT_MAX_GRID)) {
+    const target = oversized ? MAX_OUTPUT_SIZE : SOFT_MAX_GRID;
+    const scale = target / Math.max(gridWidth, gridHeight);
     gridWidth = clampInt(gridWidth * scale, 1, MAX_OUTPUT_SIZE);
     gridHeight = clampInt(gridHeight * scale, 1, MAX_OUTPUT_SIZE);
-    cellSize = (width / gridWidth + height / gridHeight) / 2;
+    cellW = width / gridWidth;
+    cellH = height / gridHeight;
+    offsetX = 0;
+    offsetY = 0;
   }
 
-  return { cellSize, gridWidth, gridHeight, confidence };
+  return {
+    cellSize: (cellW + cellH) / 2,
+    gridWidth,
+    gridHeight,
+    confidence,
+    cellWidth: cellW,
+    cellHeight: cellH,
+    offsetX,
+    offsetY,
+  };
 }

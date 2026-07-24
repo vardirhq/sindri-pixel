@@ -175,6 +175,43 @@ describe('grid detection', () => {
     expect(det.gridHeight).toBe(40);
     expect(det.confidence).toBe('high');
   });
+
+  it('detects and corrects a grid phase offset', () => {
+    // A checker sprite whose grid does NOT start at (0,0) — placed at a
+    // non-multiple pixel offset. Phase detection must recover the offset so
+    // sampling lands on real pixel boundaries; otherwise every cell straddles
+    // two logical pixels and the checker smears into many blended colors.
+    const DARK: RGBA = { r: 40, g: 40, b: 40, a: 255 };
+    const LIGHT: RGBA = { r: 210, g: 210, b: 210, a: 255 };
+    const W = 420, H = 420, cell = 10, g = 20, off = 13; // 13 mod 10 = 3px phase
+    const img = makeImage(W, H);
+    for (let i = 0; i < W * H; i++) {
+      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 245;
+      img.data[i * 4 + 3] = 255;
+    }
+    for (let gy = 0; gy < g; gy++) {
+      for (let gx = 0; gx < g; gx++) {
+        const c = (gx + gy) % 2 ? LIGHT : DARK;
+        for (let y = 0; y < cell; y++) for (let x = 0; x < cell; x++) put(img, off + gx * cell + x, off + gy * cell + y, c);
+      }
+    }
+    const det = detectGrid(img);
+    expect(det.confidence).toBe('high');
+    // A grid phase was recovered (grid does not start at the origin).
+    expect(det.offsetX).toBeGreaterThan(0);
+    expect(det.offsetY).toBeGreaterThan(0);
+
+    // Reconstructed cleanly: the checker collapses back to its two ink colors
+    // (plus at most a couple of boundary cells), not a smear of blends.
+    const { result } = reconstructPixelArt(img, {
+      ...DEFAULT_OPTIONS,
+      paletteSize: 100000,
+      mergeSimilarColors: false,
+      removeAntiAliasing: false,
+      removeIsolatedPixels: false,
+    });
+    expect(countDistinctColors(result)).toBeLessThanOrEqual(5);
+  });
 });
 
 // ── Grid detection: texture robustness (regression) ─────────────────────────
