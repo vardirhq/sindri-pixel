@@ -5,6 +5,7 @@ import {
   countDistinctColors,
   extractPalette,
   type PixelArtOptions,
+  type SamplingMode,
   type RGBAImage,
   type GridDetectionResult,
 } from '../../lib/pixelReconstruction';
@@ -65,6 +66,14 @@ const s = {
   detailRow: { display: 'flex', justifyContent: 'space-between', fontFamily: 'var(--font-mono)', fontSize: 11.5, padding: '3px 0', color: 'var(--ink-2)' } as React.CSSProperties,
   detailKey: { color: 'var(--ink-4)' } as React.CSSProperties,
   toggleRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer', padding: '4px 0' } as React.CSSProperties,
+  seg: (active: boolean, first: boolean): React.CSSProperties => ({
+    flex: 1, textAlign: 'center', padding: '6px 4px', cursor: 'pointer',
+    fontFamily: 'var(--font-mono)', fontSize: 11.5,
+    background: active ? 'var(--paper-3)' : 'var(--paper)',
+    color: active ? 'var(--ink)' : 'var(--ink-3)',
+    border: '1px solid var(--rule-2)', borderLeft: first ? '1px solid var(--rule-2)' : 'none',
+  }),
+  preset: { fontFamily: 'var(--font-mono)', fontSize: 11, padding: '5px 10px', background: 'transparent', border: '1px solid var(--rule-2)', color: 'var(--ink-2)', cursor: 'pointer' } as React.CSSProperties,
   previewPane: { flex: 1 } as React.CSSProperties,
   canvasFrame: { width: PREVIEW_BOX, height: PREVIEW_BOX, background: 'var(--paper)', border: '1px solid var(--rule-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' } as React.CSSProperties,
   btn: (primary: boolean, disabled = false): React.CSSProperties => ({ fontFamily: 'var(--font-display)', fontSize: 12.5, padding: '7px 16px', background: primary ? 'var(--ink)' : 'transparent', border: `1px solid ${primary ? 'var(--ink)' : 'var(--rule-2)'}`, color: primary ? 'var(--paper)' : 'var(--ink-2)', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.4 : 1 }),
@@ -110,6 +119,7 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
   const [gridChoice, setGridChoice] = React.useState<GridChoice>('auto');
   const [customW, setCustomW] = React.useState(64);
   const [customH, setCustomH] = React.useState(64);
+  const [samplingMode, setSamplingMode] = React.useState<SamplingMode>('mode');
   const [paletteChoice, setPaletteChoice] = React.useState<PaletteChoice>('auto');
   const [removeIsolatedPixels, setRemoveIsolatedPixels] = React.useState(true);
   const [mergeSimilarColors, setMergeSimilarColors] = React.useState(true);
@@ -123,11 +133,23 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
   React.useEffect(() => {
     if (open) {
       setFileName(''); setSource(null); setDragging(false); setError(null);
-      setGridChoice('auto'); setCustomW(64); setCustomH(64); setPaletteChoice('auto');
+      setGridChoice('auto'); setCustomW(64); setCustomH(64);
+      setSamplingMode('mode'); setPaletteChoice('auto');
       setRemoveIsolatedPixels(true); setMergeSimilarColors(true);
       setRemoveAntiAliasing(true); setTransparentBackground(true);
     }
   }, [open]);
+
+  // One-click presets. "Clean sprite" = flat pixel art; "High detail" = a
+  // faithful downscale that keeps gradients and shading.
+  const applyCleanPreset = () => {
+    setSamplingMode('mode'); setPaletteChoice('auto');
+    setRemoveIsolatedPixels(true); setMergeSimilarColors(true); setRemoveAntiAliasing(true);
+  };
+  const applyHighDetailPreset = () => {
+    setSamplingMode('average'); setPaletteChoice('original');
+    setRemoveIsolatedPixels(false); setMergeSimilarColors(false); setRemoveAntiAliasing(false);
+  };
 
   const options = React.useMemo<PixelArtOptions>(() => {
     let targetWidth: number | undefined;
@@ -146,10 +168,10 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
     else if (paletteChoice !== 'auto') paletteSize = parseInt(paletteChoice, 10);
 
     return {
-      autoDetectGrid, targetWidth, targetHeight, paletteSize,
+      autoDetectGrid, targetWidth, targetHeight, samplingMode, paletteSize,
       mergeSimilarColors, removeAntiAliasing, removeIsolatedPixels, transparentBackground,
     };
-  }, [gridChoice, customW, customH, paletteChoice, mergeSimilarColors, removeAntiAliasing, removeIsolatedPixels, transparentBackground]);
+  }, [gridChoice, customW, customH, samplingMode, paletteChoice, mergeSimilarColors, removeAntiAliasing, removeIsolatedPixels, transparentBackground]);
 
   // Recompute the reconstruction whenever the source or options change.
   const reconstruction = React.useMemo(() => {
@@ -228,6 +250,12 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
             <div style={{ display: 'flex', gap: 24, marginTop: 20 }}>
               {/* ── Controls column ── */}
               <div style={{ width: 200, flex: 'none' }}>
+                <div style={s.label}>Preset</div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                  <button style={s.preset} onClick={applyCleanPreset}>Clean sprite</button>
+                  <button style={s.preset} onClick={applyHighDetailPreset}>High detail</button>
+                </div>
+
                 <div style={s.label}>Grid size</div>
                 <select style={s.select} value={gridChoice} onChange={(e) => setGridChoice(e.target.value as GridChoice)}>
                   {GRID_PRESETS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
@@ -240,6 +268,13 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
                       onChange={(e) => setCustomH(Math.max(1, Math.min(512, parseInt(e.target.value) || 1)))} />
                   </div>
                 )}
+
+                <div style={{ ...s.label, marginTop: 16 }}>Detail</div>
+                <div style={{ display: 'flex' }}>
+                  {([['mode', 'Clean pixels'], ['average', 'Preserve detail']] as const).map(([val, lbl], i) => (
+                    <div key={val} style={s.seg(samplingMode === val, i === 0)} onClick={() => setSamplingMode(val)}>{lbl}</div>
+                  ))}
+                </div>
 
                 <div style={{ ...s.label, marginTop: 16 }}>Palette size</div>
                 <select style={s.select} value={paletteChoice} onChange={(e) => setPaletteChoice(e.target.value as PaletteChoice)}>

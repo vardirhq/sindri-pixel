@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { detectGrid, gridFromTarget, analyzeAxis } from './gridDetection';
 import { MIN_CELL_SIZE, MAX_CELL_SIZE } from './types';
 import laundrySignals from './__fixtures__/laundryGolemSignals.json';
-import { sampleCells } from './cellSampling';
+import { sampleCells, sampleCellsAverage } from './cellSampling';
 import { quantize, countDistinctColors, autoPaletteSize } from './paletteQuantize';
 import { removeIsolatedPixels, mergeSimilarColors } from './cleanup';
 import { reconstructPixelArt, imageToPackedPixels, extractPalette } from './reconstruct';
@@ -222,6 +222,53 @@ describe('cell sampling', () => {
   });
 });
 
+// ── Cell sampling: average / detail-preserving mode ─────────────────────────
+
+describe('cell sampling — average (detail preserving)', () => {
+  it('blends a gradient cell where mode would collapse it', () => {
+    // A 4×4 cell: left half red, right half blue.
+    const img = makeImage(4, 4);
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) put(img, x, y, x < 2 ? RED : BLUE);
+    }
+    const mode = get(sampleCells(img, 1, 1, true), 0, 0);
+    const avg = get(sampleCellsAverage(img, 1, 1, true), 0, 0);
+
+    // Mode picks one of the two source colors outright.
+    const isPure = (c: typeof avg) =>
+      (c.r === RED.r && c.g === RED.g && c.b === RED.b) ||
+      (c.r === BLUE.r && c.g === BLUE.g && c.b === BLUE.b);
+    expect(isPure(mode)).toBe(true);
+    // Average is a genuine blend of the two — both channels move toward the mean.
+    expect(isPure(avg)).toBe(false);
+    expect(avg.r).toBeCloseTo((RED.r + BLUE.r) / 2, -1);
+    expect(avg.b).toBeCloseTo((RED.b + BLUE.b) / 2, -1);
+  });
+
+  it('reduces to a plain mean for a fully-opaque cell', () => {
+    const img = makeImage(2, 1);
+    put(img, 0, 0, { r: 100, g: 40, b: 200, a: 255 });
+    put(img, 1, 0, { r: 200, g: 80, b: 40, a: 255 });
+    const avg = get(sampleCellsAverage(img, 1, 1, true), 0, 0);
+    expect(avg).toEqual({ r: 150, g: 60, b: 120, a: 255 });
+  });
+
+  it('averages alpha in premultiplied space and preserves transparency', () => {
+    // One opaque red pixel, one fully transparent pixel.
+    const img = makeImage(2, 1);
+    put(img, 0, 0, { r: 200, g: 20, b: 20, a: 255 });
+    // pixel (1,0) left transparent
+    const avg = get(sampleCellsAverage(img, 1, 1, false), 0, 0);
+    // Color comes only from the opaque pixel (no black bleed); alpha halves.
+    expect(avg.r).toBe(200);
+    expect(avg.g).toBe(20);
+    expect(avg.a).toBe(128);
+
+    const allClear = makeImage(4, 4);
+    expect(get(sampleCellsAverage(allClear, 1, 1, true), 0, 0).a).toBe(0);
+  });
+});
+
 // ── Palette quantization ────────────────────────────────────────────────────
 
 describe('palette quantization', () => {
@@ -359,6 +406,32 @@ describe('reconstructPixelArt', () => {
     const on = reconstructPixelArt(img, { ...base, mergeSimilarColors: true }).result;
     const off = reconstructPixelArt(img, { ...base, mergeSimilarColors: false }).result;
     expect(countDistinctColors(on)).toBeLessThan(countDistinctColors(off));
+  });
+
+  it('average sampling mode preserves more detail than mode sampling', () => {
+    // A source with smooth gradients (many colors) sampled at a coarse grid:
+    // mode collapses each cell to one color, average keeps the blends.
+    const img = makeImage(64, 64);
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) {
+        put(img, x, y, { r: x * 4, g: y * 4, b: (x + y) * 2, a: 255 });
+      }
+    }
+    const base: PixelArtOptions = {
+      ...DEFAULT_OPTIONS,
+      autoDetectGrid: false,
+      targetWidth: 16,
+      targetHeight: 16,
+      paletteSize: 100000, // no quantization, so sampling drives the color count
+      mergeSimilarColors: false,
+      removeAntiAliasing: false,
+      removeIsolatedPixels: false,
+    };
+    const mode = reconstructPixelArt(img, { ...base, samplingMode: 'mode' }).result;
+    const average = reconstructPixelArt(img, { ...base, samplingMode: 'average' }).result;
+    expect(mode.data).not.toEqual(average.data);
+    // Average retains at least as many distinct colors (the gradient detail).
+    expect(countDistinctColors(average)).toBeGreaterThanOrEqual(countDistinctColors(mode));
   });
 
   it('produces packed pixels and a palette usable by the editor', () => {

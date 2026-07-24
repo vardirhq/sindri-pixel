@@ -57,6 +57,74 @@ export function sampleCells(
   return out;
 }
 
+/**
+ * Resample `source` down to `gridWidth × gridHeight` by taking the alpha-
+ * weighted mean of each logical cell. This is a detail-preserving downscale
+ * (a box/area filter): gradients, shading, and soft edges survive, where mode
+ * sampling would flatten them. Color is averaged in premultiplied space so
+ * transparent pixels don't bleed into the result.
+ */
+export function sampleCellsAverage(
+  source: RGBAImage,
+  gridWidth: number,
+  gridHeight: number,
+  transparentBackground: boolean,
+): RGBAImage {
+  const out = createImage(gridWidth, gridHeight);
+  const cellW = source.width / gridWidth;
+  const cellH = source.height / gridHeight;
+
+  for (let gy = 0; gy < gridHeight; gy++) {
+    const y0 = Math.floor(gy * cellH);
+    const y1 = Math.max(y0 + 1, Math.floor((gy + 1) * cellH));
+    for (let gx = 0; gx < gridWidth; gx++) {
+      const x0 = Math.floor(gx * cellW);
+      const x1 = Math.max(x0 + 1, Math.floor((gx + 1) * cellW));
+      setPixel(out, gx, gy, averageRegion(source, x0, y0, x1, y1, transparentBackground));
+    }
+  }
+  return out;
+}
+
+function averageRegion(
+  source: RGBAImage,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  transparentBackground: boolean,
+): RGBA {
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  let sumA = 0;
+  let count = 0;
+
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const c = pixelAt(source, x, y);
+      // Premultiply by alpha so transparent pixels contribute no color.
+      sumR += c.r * c.a;
+      sumG += c.g * c.a;
+      sumB += c.b * c.a;
+      sumA += c.a;
+      count++;
+    }
+  }
+
+  if (count === 0) return { r: 0, g: 0, b: 0, a: 0 };
+  const a = Math.round(sumA / count);
+  if (sumA === 0 || (transparentBackground && a < ALPHA_TRANSPARENT_CUTOFF)) {
+    return { r: 0, g: 0, b: 0, a: 0 };
+  }
+  return {
+    r: Math.round(sumR / sumA),
+    g: Math.round(sumG / sumA),
+    b: Math.round(sumB / sumA),
+    a,
+  };
+}
+
 function sampleRegion(
   source: RGBAImage,
   x0: number,

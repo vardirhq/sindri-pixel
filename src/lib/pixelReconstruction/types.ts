@@ -32,6 +32,15 @@ export interface GridDetectionResult {
   confidence: 'high' | 'medium' | 'low';
 }
 
+/**
+ * How each logical cell is reduced to a single output pixel.
+ *  - `mode`    : most-common color in the cell → flat, clean pixel-art blocks
+ *                (resistant to anti-aliased edges). The default.
+ *  - `average` : alpha-weighted mean of the cell → a detail-preserving
+ *                downscale that keeps gradients, shading, and soft edges.
+ */
+export type SamplingMode = 'mode' | 'average';
+
 export interface PixelArtOptions {
   /** Explicit output width. Used when `autoDetectGrid` is false. */
   targetWidth?: number;
@@ -39,6 +48,8 @@ export interface PixelArtOptions {
   targetHeight?: number;
   /** When true, ignore target dimensions and detect the grid automatically. */
   autoDetectGrid: boolean;
+  /** Per-cell reduction strategy. Defaults to `mode` when omitted. */
+  samplingMode?: SamplingMode;
   /** Target palette size. `undefined` (or 0) means "auto". */
   paletteSize?: number;
   mergeSimilarColors: boolean;
@@ -53,6 +64,7 @@ export interface PixelArtOptions {
 
 export const DEFAULT_OPTIONS: PixelArtOptions = {
   autoDetectGrid: true,
+  samplingMode: 'mode',
   mergeSimilarColors: true,
   removeAntiAliasing: true,
   removeIsolatedPixels: true,

@@ -7,7 +7,7 @@
 //     → cleanup pass (remove isolated pixels, merge near-duplicate colors)
 //     → output: native-resolution sprite
 
-import { sampleCells } from './cellSampling';
+import { sampleCells, sampleCellsAverage } from './cellSampling';
 import { mergeSimilarColors, removeIsolatedPixels } from './cleanup';
 import { toHex } from './color';
 import { detectGrid, gridFromTarget } from './gridDetection';
@@ -43,8 +43,11 @@ export function reconstructPixelArt(
       ? gridFromTarget(source, options.targetWidth, options.targetHeight)
       : detectGrid(source);
 
-  // 2. Cell sampling → native-resolution sprite.
-  let image = sampleCells(
+  // 2. Cell sampling → native-resolution sprite. `mode` flattens each cell to
+  //    its dominant color (clean pixel art); `average` keeps per-cell detail
+  //    (a faithful downscale).
+  const sampler = options.samplingMode === 'average' ? sampleCellsAverage : sampleCells;
+  let image = sampler(
     source,
     detection.gridWidth,
     detection.gridHeight,
