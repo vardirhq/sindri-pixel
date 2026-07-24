@@ -130,6 +130,27 @@ describe('grid detection', () => {
     expect(det.gridHeight).toBe(32);
     expect(det.cellSize).toBeCloseTo(4, 0);
   });
+
+  it('recovers a jittered-cell grid via median peak spacing', () => {
+    // 20×16 logical checker with ~10px cells jittered ±2px — a variable-width
+    // grid that defeats rigid autocorrelation but not median peak spacing.
+    const DARK: RGBA = { r: 35, g: 40, b: 55, a: 255 };
+    const LIGHT: RGBA = { r: 210, g: 200, b: 190, a: 255 };
+    const gw = 20, gh = 16, cell = 10;
+    const rng = (() => { let s = 7; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
+    const xb = [0]; for (let i = 1; i < gw; i++) xb.push(Math.round(i * cell + (rng() - 0.5) * 4)); xb.push(gw * cell);
+    const yb = [0]; for (let i = 1; i < gh; i++) yb.push(Math.round(i * cell + (rng() - 0.5) * 4)); yb.push(gh * cell);
+    const img = makeImage(xb[gw], yb[gh]);
+    for (let gy = 0; gy < gh; gy++) {
+      for (let gx = 0; gx < gw; gx++) {
+        const c = (gx + gy) % 2 ? LIGHT : DARK;
+        for (let y = yb[gy]; y < yb[gy + 1]; y++) for (let x = xb[gx]; x < xb[gx + 1]; x++) put(img, x, y, c);
+      }
+    }
+    const det = detectGrid(img);
+    expect(Math.abs(det.gridWidth - gw)).toBeLessThanOrEqual(1);
+    expect(Math.abs(det.gridHeight - gh)).toBeLessThanOrEqual(1);
+  });
 });
 
 // ── Grid detection: texture robustness (regression) ─────────────────────────
@@ -156,22 +177,45 @@ describe('grid detection — texture robustness', () => {
     expect(highConfidence(row)).toBe(false);
   });
 
+  it('sees past regular sub-cell texture to the true, coarser grid', () => {
+    // A genuine 12px grid (luminance-distinct checker) carrying a regular 6px
+    // sub-cell texture. A naive detector locks onto the 6px texture; harmonic
+    // reconciliation (strong-edge peak spacing) recovers the true 12px cell.
+    const DARK: RGBA = { r: 35, g: 40, b: 55, a: 255 };
+    const LIGHT: RGBA = { r: 210, g: 200, b: 190, a: 255 };
+    const gw = 16, gh = 16, cell = 12;
+    const img = makeImage(gw * cell, gh * cell);
+    for (let gy = 0; gy < gh; gy++) {
+      for (let gx = 0; gx < gw; gx++) {
+        const c = (gx + gy) % 2 ? LIGHT : DARK;
+        for (let y = gy * cell; y < (gy + 1) * cell; y++) {
+          for (let x = gx * cell; x < (gx + 1) * cell; x++) {
+            const m = (((x / 6) | 0) + ((y / 6) | 0)) % 2 ? 20 : -20; // subtle 6px texture
+            const clamp = (n: number) => Math.max(0, Math.min(255, n));
+            put(img, x, y, { r: clamp(c.r + m), g: clamp(c.g + m), b: clamp(c.b + m), a: 255 });
+          }
+        }
+      }
+    }
+    const det = detectGrid(img);
+    // The true 12px cell, not the 6px texture (which would give a 32×32 grid).
+    expect(det.cellSize).toBeGreaterThan(9);
+    expect(det.gridWidth).toBe(16);
+    expect(det.gridHeight).toBe(16);
+  });
+
   it('caps an oversized low-confidence detection to a usable sprite size', () => {
-    // Synthetic model of the same pathology: a large image whose dominant
-    // structure is an imperfect, noisy ~4px texture. Detection should refuse to
-    // emit hundreds of cells at high confidence.
-    const rng = (() => { let s = 0x2f6e2b1; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
-    // Large enough that a raw 4px period would exceed the fine-grid limit, with
-    // a low-amplitude, heavily-noised texture so the peak is only moderate —
-    // the same combination (oversized grid + mediocre peak) as the real image.
-    const W = 880, H = 760;
+    // A large, detailed image with smooth low-frequency content and fine noise
+    // but *no* real grid — like the laundry image, coarsening never sharply
+    // increases within-cell variance, so grid clarity stays low. Detection must
+    // not confidently emit hundreds of cells; it caps to a usable sprite.
+    const rng = (() => { let s = 12345; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
+    const W = 900, H = 760;
     const img = makeImage(W, H);
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
-        const base = 120 + 30 * Math.sin(x / 41) + 30 * Math.cos(y / 37); // slow large-scale variation
-        const tex = ((x >> 2) + (y >> 2)) % 2 ? 22 : -22;                  // dominant ~4px checker
-        const noise = (rng() - 0.5) * 200;                                 // makes the texture imperfect
-        const v = Math.max(0, Math.min(255, base + tex + noise));
+        const base = 128 + 60 * Math.sin(x / 70) + 50 * Math.cos(y / 55) + 40 * Math.sin((x + y) / 90);
+        const v = Math.max(0, Math.min(255, base + (rng() - 0.5) * 120));
         put(img, x, y, { r: v, g: v, b: v, a: 255 });
       }
     }
@@ -179,8 +223,7 @@ describe('grid detection — texture robustness', () => {
     const det = detectGrid(img);
     // Not trusted as a clean grid…
     expect(det.confidence).not.toBe('high');
-    // …and capped to a sensible sprite resolution (SOFT_MAX_GRID = 128), not
-    // the ~220 cells the raw 4px period would have produced.
+    // …and capped to a sensible sprite resolution (SOFT_MAX_GRID = 128).
     expect(Math.max(det.gridWidth, det.gridHeight)).toBeLessThanOrEqual(128);
     // Aspect ratio is preserved through the cap.
     expect(det.gridWidth / det.gridHeight).toBeCloseTo(W / H, 1);
