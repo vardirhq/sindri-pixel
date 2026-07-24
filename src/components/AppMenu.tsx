@@ -66,6 +66,7 @@ const MENU: Record<string, MenuSection[]> = {
     ]},
     { group: 'transfer', items: [
       { id: 'import',     label: 'Import sprite…',          keys: '⌘I' },
+      { id: 'import-ai',  label: 'Import AI art…',          keys: '' },
       { id: 'export-png', label: 'Export as PNG',           keys: '⌘E' },
       { id: 'export-gif', label: 'Export as animated GIF',  keys: '⇧⌘E' },
       { id: 'export-sheet', label: 'Export sprite sheet',   keys: '' },

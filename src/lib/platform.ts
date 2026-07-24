@@ -60,6 +60,23 @@ export async function encodePngInBrowser(
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+/**
+ * Decode an image File into a full-resolution `ImageData` via an offscreen
+ * canvas. Used by the AI-art import path, which needs the raw raster (not the
+ * packed-pixel form) to detect the implied grid. Works in both the browser and
+ * the Tauri webview.
+ */
+export async function loadImageData(file: File): Promise<ImageData> {
+  const bmp = await createImageBitmap(file);
+  const canvas = document.createElement('canvas');
+  canvas.width = bmp.width;
+  canvas.height = bmp.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(bmp, 0, 0);
+  return ctx.getImageData(0, 0, bmp.width, bmp.height);
+}
+
 /** Decode a PNG File into { w, h, pixels } — browser fallback for `import_png`. */
 export async function decodePngInBrowser(file: File): Promise<{ w: number; h: number; pixels: number[] }> {
   const bmp = await createImageBitmap(file);
