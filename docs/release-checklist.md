@@ -29,6 +29,9 @@
 - [ ] Verify application name, identifier, icon, version, and uninstall behavior.
 - [ ] Compare every downloaded asset against `SHA256SUMS.txt`.
 - [ ] Mark prerelease tags such as `v0.1.0-beta.1` as GitHub prereleases.
+- [ ] For a prerelease version, confirm `bundle.windows.wix.version` in
+      `src-tauri/tauri.conf.json` matches it (`0.1.0-beta.1` → `0.1.0.1`);
+      MSI rejects non-numeric prerelease identifiers.
 - [ ] Add known limitations and Dream Pixel migration guidance to the release notes.
 
 ## Stable-release blockers
