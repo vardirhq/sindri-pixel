@@ -28,7 +28,7 @@
 - [ ] Confirm OS warnings accurately reflect the current unsigned beta status.
 - [ ] Verify application name, identifier, icon, version, and uninstall behavior.
 - [ ] Compare every downloaded asset against `SHA256SUMS.txt`.
-- [ ] Mark prerelease tags such as `v0.2.0-beta.1` as GitHub prereleases.
+- [ ] Mark prerelease tags such as `v0.1.0-beta.1` as GitHub prereleases.
 - [ ] Add known limitations and Dream Pixel migration guidance to the release notes.
 
 ## Stable-release blockers

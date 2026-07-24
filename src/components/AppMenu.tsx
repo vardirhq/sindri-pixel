@@ -198,7 +198,7 @@ export function AppMenu({ open, anchorRect, onClose, onAction, initialTab, recen
           ))}
         </div>
         <div style={appMenuStyles.footer}>
-          <span>sindri pixel · v0.2.0</span>
+          <span>sindri pixel · v0.1.0</span>
           <span>⌘K for anything</span>
         </div>
       </div>
