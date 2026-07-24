@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added an **Import AI Art** flow that reconstructs AI-generated pixel-art rasters into true low-resolution sprites: autocorrelation-based grid detection, mode-color cell sampling, median-cut palette quantization, and a rule-based cleanup pass (isolated-pixel removal, near-duplicate color merging), with a side-by-side preview dialog. All processing runs client-side.
+- Added an **Import AI Art** flow that reconstructs AI-generated pixel-art rasters into true low-resolution sprites: confidence-scored autocorrelation grid detection (distrusts texture-heavy images and caps oversized output instead of returning a noisy downscale), mode-color cell sampling, median-cut palette quantization, and a rule-based cleanup pass (isolated-pixel removal, near-duplicate color merging), with a side-by-side preview dialog. All processing runs client-side.
 - Added a versioned `.spr` project format with legacy unversioned-file migration and strict validation.
 - Added automated tests for project compatibility, pixel conversion, layer compositing, and sprite-sheet layout.
 - Added cross-platform GitHub Actions checks, native Tauri bundle builds, prerelease publishing, and SHA-256 release checksums.

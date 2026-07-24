@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { detectGrid, gridFromTarget } from './gridDetection';
+import { detectGrid, gridFromTarget, analyzeAxis } from './gridDetection';
+import { MIN_CELL_SIZE, MAX_CELL_SIZE } from './types';
+import laundrySignals from './__fixtures__/laundryGolemSignals.json';
 import { sampleCells } from './cellSampling';
 import { quantize, countDistinctColors, autoPaletteSize } from './paletteQuantize';
 import { removeIsolatedPixels, mergeSimilarColors } from './cleanup';
@@ -127,6 +129,61 @@ describe('grid detection', () => {
     expect(det.gridWidth).toBe(32);
     expect(det.gridHeight).toBe(32);
     expect(det.cellSize).toBeCloseTo(4, 0);
+  });
+});
+
+// ── Grid detection: texture robustness (regression) ─────────────────────────
+// A real AI-generated "laundry golem" pixel-art image had strong ~4px fabric/
+// mesh texture that was more periodic than its coarse art grid. An earlier
+// detector locked onto that 4px texture and returned a 287×342 grid at *high*
+// confidence — a noisy downscale, not a low-res sprite. These lock the fix in.
+
+describe('grid detection — texture robustness', () => {
+  it('distrusts the real laundry-golem image signals (fine texture, not a grid)', () => {
+    // Per-axis edge signals decoded from the actual image (see the fixture).
+    const col = analyzeAxis(new Float32Array(laundrySignals.col), MIN_CELL_SIZE, MAX_CELL_SIZE);
+    const row = analyzeAxis(new Float32Array(laundrySignals.row), MIN_CELL_SIZE, MAX_CELL_SIZE);
+
+    // The dominant period really is the fine texture (~4px) on both axes…
+    expect(col.period).toBeLessThanOrEqual(6);
+    expect(row.period).toBeLessThanOrEqual(6);
+    // …but the peaks are mediocre and sit in a broad comb, so neither axis
+    // clears the "high confidence" bar (strength ≥ 0.9 AND dominance ≥ 0.45).
+    expect(col.strength).toBeLessThan(0.9);
+    expect(row.strength).toBeLessThan(0.9);
+    const highConfidence = (e: typeof col) => e.strength >= 0.9 && e.dominance >= 0.45;
+    expect(highConfidence(col)).toBe(false);
+    expect(highConfidence(row)).toBe(false);
+  });
+
+  it('caps an oversized low-confidence detection to a usable sprite size', () => {
+    // Synthetic model of the same pathology: a large image whose dominant
+    // structure is an imperfect, noisy ~4px texture. Detection should refuse to
+    // emit hundreds of cells at high confidence.
+    const rng = (() => { let s = 0x2f6e2b1; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
+    // Large enough that a raw 4px period would exceed the fine-grid limit, with
+    // a low-amplitude, heavily-noised texture so the peak is only moderate —
+    // the same combination (oversized grid + mediocre peak) as the real image.
+    const W = 880, H = 760;
+    const img = makeImage(W, H);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const base = 120 + 30 * Math.sin(x / 41) + 30 * Math.cos(y / 37); // slow large-scale variation
+        const tex = ((x >> 2) + (y >> 2)) % 2 ? 22 : -22;                  // dominant ~4px checker
+        const noise = (rng() - 0.5) * 200;                                 // makes the texture imperfect
+        const v = Math.max(0, Math.min(255, base + tex + noise));
+        put(img, x, y, { r: v, g: v, b: v, a: 255 });
+      }
+    }
+
+    const det = detectGrid(img);
+    // Not trusted as a clean grid…
+    expect(det.confidence).not.toBe('high');
+    // …and capped to a sensible sprite resolution (SOFT_MAX_GRID = 128), not
+    // the ~220 cells the raw 4px period would have produced.
+    expect(Math.max(det.gridWidth, det.gridHeight)).toBeLessThanOrEqual(128);
+    // Aspect ratio is preserved through the cap.
+    expect(det.gridWidth / det.gridHeight).toBeCloseTo(W / H, 1);
   });
 });
 
