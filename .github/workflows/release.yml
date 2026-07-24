@@ -3,11 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - 'sindri-pixel-v*'
+      - 'v*'
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing sindri-pixel-v* tag to publish
+        description: Existing v* tag to publish
         required: true
         type: string
 
