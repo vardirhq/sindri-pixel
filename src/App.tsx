@@ -25,6 +25,9 @@ import type { RecentFile, SavedTemplate, AutosaveSnapshot } from './lib/storage'
 import { IS_TAURI, downloadBytes, downloadText, pickFile, encodePngInBrowser, decodePngInBrowser } from './lib/platform';
 import { parseProject, serializeProject } from './lib/project-format';
 import { buildSpriteSheet, compositeFrame as compositeSpriteFrame, frameFromPackedPixels } from './lib/sprite';
+import { ImportAiArtDialog } from './components/import/ImportAiArtDialog';
+import type { AiArtImportResult } from './components/import/ImportAiArtDialog';
+import { imageToPackedPixels } from './lib/pixelReconstruction';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -430,6 +433,8 @@ function App() {
   const [resizeModalOpen, setResizeModalOpen] = useState(false);
   // Keyboard shortcuts modal
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // Import AI art dialog
+  const [aiImportOpen, setAiImportOpen] = useState(false);
   // Context menu
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextItem[] } | null>(null);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
@@ -1220,6 +1225,19 @@ function App() {
     }
   };
 
+  // Turn a reconstructed AI-art result into a new single-frame document.
+  const importAiArt = useCallback((res: AiArtImportResult) => {
+    const { image, palette, name } = res;
+    const packed = imageToPackedPixels(image);
+    const frame = frameFromPackedPixels(image.width, image.height, packed);
+    applyProject([frame], image.width, image.height, name, palette.length ? palette : undefined);
+    setCurrentFilePath(null);
+    pushRecent({ name, path: '', spec: `${image.width} × ${image.height} · 1 frame`, timestamp: Date.now() });
+    setRecentFiles(getRecents());
+    setAiImportOpen(false);
+    enterEditor();
+  }, [applyProject]);
+
   const openRecent = async (file: RecentFile) => {
     if (!file.path || !IS_TAURI) {
       enterEditor();
@@ -1841,6 +1859,7 @@ function App() {
           if      (id === 'new')            { setNewProjectFor({}); }
           else if (id === 'open')           void openFile();
           else if (id === 'import')         void openFile();
+          else if (id === 'import-ai')      setAiImportOpen(true);
           else if (id === 'save')           void saveFile(false);
           else if (id === 'save-as')        void saveFile(true);
           else if (id === 'export-png')     setExportModalFor('png');
@@ -1928,6 +1947,12 @@ function App() {
       />
 
       <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+
+      <ImportAiArtDialog
+        open={aiImportOpen}
+        onClose={() => setAiImportOpen(false)}
+        onConfirm={importAiArt}
+      />
 
       {contextMenu && (
         <ContextMenu
