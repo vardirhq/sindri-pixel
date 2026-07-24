@@ -39,8 +39,9 @@ export interface GridDetectionResult {
 
 /**
  * How each logical cell is reduced to a single output pixel.
- *  - `mode`    : most-common color in the cell → flat, clean pixel-art blocks
- *                (resistant to anti-aliased edges). The default.
+ *  - `mode`    : most-common (center-weighted) color in the cell → flat, clean
+ *                pixel-art blocks, resistant to anti-aliased edges and to slight
+ *                grid misalignment. The default.
  *  - `average` : alpha-weighted mean of the cell → a detail-preserving
  *                downscale that keeps gradients, shading, and soft edges.
  */

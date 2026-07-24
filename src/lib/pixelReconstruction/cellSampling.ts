@@ -6,6 +6,15 @@
 // slightly-off pixel as "the" mode, we bucket pixels by a coarse 4-bit-per-
 // channel quantization, find the most populated bucket, then average the
 // original (full-precision) pixels that fell in that bucket.
+//
+// The vote is *center-weighted*: a pixel near the cell centre counts for more
+// than one near the boundary. The logical pixel a cell represents lives at its
+// centre, so when a grid line is slightly off and a cell straddles two logical
+// pixels, a plain count lets the intruding edge colour win by area. Down-
+// weighting the border makes the central colour win instead — an eye pixel that
+// is 45% black (centre) and 55% skin (a boundary sliver) resolves to black, the
+// way a human counting pixels reads it. On a correctly aligned cell every pixel
+// shares one colour, so the weighting changes nothing.
 
 import { createImage, pixelAt, setPixel } from './color';
 import type { RGBA, RGBAImage } from './types';
@@ -14,8 +23,33 @@ import type { RGBA, RGBAImage } from './types';
 // (when the transparent-background option is on).
 const ALPHA_TRANSPARENT_CUTOFF = 128;
 
+// Radial vote weight falls off from the cell centre. σ is in units of the cell
+// half-extent: at σ=0.5 the centre weighs 1, the edge midpoints ~0.14, corners
+// ~0.02. Small enough to reject boundary slivers, wide enough that a genuine
+// off-centre detail still carries real weight.
+const CENTER_WEIGHT_SIGMA = 0.5;
+
+/** Radial weight of source pixel (x, y) within cell [x0,x1)×[y0,y1). */
+function centerWeight(
+  x: number,
+  y: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): number {
+  const cx = (x0 + x1 - 1) / 2;
+  const cy = (y0 + y1 - 1) / 2;
+  const hx = Math.max((x1 - x0) / 2, 0.5);
+  const hy = Math.max((y1 - y0) / 2, 0.5);
+  const ndx = (x - cx) / hx;
+  const ndy = (y - cy) / hy;
+  const d2 = ndx * ndx + ndy * ndy;
+  return Math.exp(-d2 / (2 * CENTER_WEIGHT_SIGMA * CENTER_WEIGHT_SIGMA));
+}
+
 interface Bucket {
-  count: number;
+  weight: number;
   r: number;
   g: number;
   b: number;
@@ -175,37 +209,39 @@ function sampleRegion(
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
       const c = pixelAt(source, x, y);
+      const w = centerWeight(x, y, x0, y0, x1, y1);
       const key = bucketKey(c);
       const b = buckets.get(key);
       if (b) {
-        b.count++;
-        b.r += c.r;
-        b.g += c.g;
-        b.b += c.b;
-        b.a += c.a;
+        b.weight += w;
+        b.r += c.r * w;
+        b.g += c.g * w;
+        b.b += c.b * w;
+        b.a += c.a * w;
       } else {
-        buckets.set(key, { count: 1, r: c.r, g: c.g, b: c.b, a: c.a });
+        buckets.set(key, { weight: w, r: c.r * w, g: c.g * w, b: c.b * w, a: c.a * w });
       }
     }
   }
 
-  // Pick the most populated bucket (ties broken by the earlier-seen key so
+  // Pick the highest-weighted bucket (ties broken by the earlier-seen key so
   // the result is deterministic).
   let best: Bucket | null = null;
   for (const b of buckets.values()) {
-    if (!best || b.count > best.count) best = b;
+    if (!best || b.weight > best.weight) best = b;
   }
   if (!best) return { r: 0, g: 0, b: 0, a: 0 };
 
-  // Representative = average of the original pixels in the winning bucket.
-  const a = Math.round(best.a / best.count);
+  // Representative = weighted average of the original pixels in the winning
+  // bucket (the same weights, so the centre dominates the tint too).
+  const a = Math.round(best.a / best.weight);
   if (transparentBackground && a < ALPHA_TRANSPARENT_CUTOFF) {
     return { r: 0, g: 0, b: 0, a: 0 };
   }
   return {
-    r: Math.round(best.r / best.count),
-    g: Math.round(best.g / best.count),
-    b: Math.round(best.b / best.count),
+    r: Math.round(best.r / best.weight),
+    g: Math.round(best.g / best.weight),
+    b: Math.round(best.b / best.weight),
     a,
   };
 }
