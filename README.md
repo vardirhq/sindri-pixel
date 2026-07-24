@@ -214,7 +214,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked
 
 ## Roadmap
 
-Sindri Pixel `v0.2.0-beta.1` is a release-readiness beta. The editor feature set is in place; current work prioritizes file safety, export correctness, native packaging, compatibility, and real workflow testing over adding more tools.
+Sindri Pixel `v0.1.0-beta.1` is a release-readiness beta. The editor feature set is in place; current work prioritizes file safety, export correctness, native packaging, compatibility, and real workflow testing over adding more tools.
 
 ---
 

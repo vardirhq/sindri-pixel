@@ -37,7 +37,7 @@ export function StatusBar({ aiStatus, cursor, canvasSize, frameCount, layerCount
         <span>{zoom}×</span>
         <span>{frameCount} frames</span>
         <span>{layerCount} layers</span>
-        <span>sindri-pixel v0.2.0</span>
+        <span>sindri-pixel v0.1.0</span>
       </div>
     </footer>
   );
