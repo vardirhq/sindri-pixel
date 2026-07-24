@@ -78,6 +78,18 @@ Two UI strings also show the marketing version: `src/components/StatusBar.tsx`
 and `src/components/AppMenu.tsx` (short form, e.g. `v0.1.0`). Update them when
 the major/minor changes.
 
+**Prereleases and the MSI bundle.** WiX/MSI requires a numeric-only
+`major.minor.patch[.build]` version, so a semver prerelease with a
+non-numeric identifier (`0.1.0-beta.1`) makes `tauri build` fail on Windows
+with *"optional pre-release identifier in app version must be numeric-only"*.
+Only the MSI target is strict — NSIS, deb, AppImage, and dmg all accept the
+full semver string. `bundle.windows.wix.version` in `tauri.conf.json`
+overrides the version for MSI alone, encoding the prerelease number as the
+fourth field (`0.1.0-beta.1` → `0.1.0.1`). Bump it alongside the three files
+above whenever the version has a prerelease identifier. Note that Windows
+Installer ignores the fourth field when comparing versions for upgrades, so
+it distinguishes betas cosmetically, not for upgrade detection.
+
 CI/release workflows (`.github/workflows/`):
 
 - `desktop.yml` — **CI only**: quality gate + native package build on pull
