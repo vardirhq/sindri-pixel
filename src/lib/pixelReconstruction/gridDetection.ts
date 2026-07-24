@@ -1,24 +1,20 @@
 // Sindri Pixel — grid detection for AI pixel-art reconstruction.
 //
-// AI "pixel art" draws an implied grid inconsistently: one apparent pixel may
-// be 14px wide, its neighbor 18px, with anti-aliased edges and fine sub-cell
-// texture (fabric weave, mesh, dithering). Recovering the true cell size from
-// that is the hard part. We use three cooperating signals:
+// AI "pixel art" only *looks* pixelated: it's a smooth render with an implied
+// grid drawn inconsistently (one apparent pixel 14px wide, its neighbor 18px),
+// anti-aliased edges, and fine sub-cell texture. Recovering the true cell size
+// is the hard part.
 //
-//  1. Peak spacing — the *median gap* between edge peaks on each axis. Robust
-//     to jittered cell widths (a median tolerates the variation), and the
-//     primary period estimate.
-//  2. Autocorrelation — a normalized self-correlation of the edge signal. A
-//     strong, dominant peak means a genuine repeating grid; a broad "comb"
-//     means ambiguous texture. Used to score confidence and cross-check.
-//  3. Within-cell variance — arbitrates harmonic aliases: if a detector locked
-//     onto sub-cell texture, coarsening to the true cell keeps cells nearly as
-//     uniform, whereas coarsening past the true cell merges distinct colors and
-//     variance jumps. So we coarsen while variance stays flat.
-//
-// Confidence reflects peak regularity, autocorrelation strength, and agreement
-// between the estimates; a low-confidence estimate that would yield an
-// implausibly large sprite is capped to a usable resolution.
+// The core idea mirrors what a human does when they "count the pixels": overlay
+// a candidate grid and check whether every cell is internally uniform. At the
+// TRUE cell size (and correct phase) each cell holds a single logical pixel, so
+// within-cell variance collapses to a sharp local minimum — a "dip". A slightly
+// wrong size makes cells straddle two pixels, so variance is high on either
+// side. So we sweep the candidate cell size, phase-align each candidate, and
+// find the variance dip. The DEPTH of the dip is the confidence: a deep dip
+// means a genuine pixel grid; a flat curve means a detailed render with no true
+// grid (correctly reported as low confidence). Integral images make the sweep
+// fast.
 
 import { luminance } from './color';
 import { axisBoundaries } from './cellSampling';
@@ -30,26 +26,21 @@ import {
   type RGBAImage,
 } from './types';
 
-// A grid this regular is treated as rigid: worth sub-pixel cell + phase fitting.
-const RIGID_REGULARITY = 0.8;
-
 // When detection is not confident, distrust very fine grids: a sprite this
-// large from a weak signal is almost always texture, so cap the longer side to
-// a sensible default and let the user override upward if they really wanted it.
+// large from a weak signal is almost always texture, so cap the longer side.
 const SOFT_MAX_GRID = 128;
-// Above this, a non-high-confidence estimate is downgraded — a huge grid from a
-// weak signal is the fingerprint of sub-cell texture, not an art grid.
-const FINE_GRID_LIMIT = 176;
+// Variance-dip depth thresholds for confidence (ratio of neighbor variance to
+// the dip). A clean grid resonates strongly (≫1); a detailed render is ~1.
+const DIP_HIGH = 1.5;
+const DIP_MEDIUM = 1.25;
 
 type Confidence = GridDetectionResult['confidence'];
 
-interface AxisEstimate {
-  /** Fundamental period in source pixels (the recovered cell size for the axis). */
-  period: number;
-  /** Normalized autocorrelation at the peak, in [0, 1]. */
-  strength: number;
-  /** How much the peak stands out from the average lag (peak − mean corr). */
-  dominance: number;
+interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
 }
 
 /** Grayscale luminance grid (one float per source pixel). */
@@ -63,56 +54,48 @@ function toLuminance(image: RGBAImage): Float32Array {
   return lum;
 }
 
-/**
- * Edge signal over the Y axis: for each row, the summed absolute luminance
- * change from the row above. Spikes at horizontal cell boundaries → its
- * period is the cell *height*.
- */
-function rowEdgeSignal(lum: Float32Array, width: number, height: number): Float32Array {
-  const signal = new Float32Array(height);
-  for (let y = 1; y < height; y++) {
+/** Edge signal over the Y axis: summed absolute luminance change from the row
+ *  above (spikes at horizontal cell boundaries). Used for phase alignment. */
+function rowEdgeSignal(lum: Float32Array, width: number, box: Box): Float32Array {
+  const signal = new Float32Array(box.y1);
+  for (let y = Math.max(1, box.y0); y < box.y1; y++) {
     let sum = 0;
     const row = y * width;
     const prev = (y - 1) * width;
-    for (let x = 0; x < width; x++) {
-      sum += Math.abs(lum[row + x] - lum[prev + x]);
-    }
+    for (let x = box.x0; x < box.x1; x++) sum += Math.abs(lum[row + x] - lum[prev + x]);
     signal[y] = sum;
   }
   return signal;
 }
 
-/** Edge signal over the X axis → its period is the cell *width*. */
-function colEdgeSignal(lum: Float32Array, width: number, height: number): Float32Array {
-  const signal = new Float32Array(width);
-  for (let x = 1; x < width; x++) {
+/** Edge signal over the X axis. */
+function colEdgeSignal(lum: Float32Array, width: number, box: Box): Float32Array {
+  const signal = new Float32Array(box.x1);
+  for (let x = Math.max(1, box.x0); x < box.x1; x++) {
     let sum = 0;
-    for (let y = 0; y < height; y++) {
-      const row = y * width;
-      sum += Math.abs(lum[row + x] - lum[row + x - 1]);
-    }
+    for (let y = box.y0; y < box.y1; y++) sum += Math.abs(lum[y * width + x] - lum[y * width + x - 1]);
     signal[x] = sum;
   }
   return signal;
 }
 
 /**
- * Analyze one 1D edge signal. Uses a properly *normalized* autocorrelation
- * (Pearson over the overlapping window) so `strength` is a real correlation in
- * [0, 1] and comparable across images. Returns the fundamental period (the
- * smallest period whose correlation is near the peak, so we don't lock onto a
- * 2×/3× harmonic multiple), the peak strength, and how far the peak rises above
- * the mean lag (`dominance` — low for a broad "comb" with no clear winner).
+ * Normalized autocorrelation of an edge signal. Retained as a signal-level
+ * utility (and covered by the laundry-fixture regression test): a strong,
+ * dominant peak indicates a genuine repeating grid, a broad comb indicates
+ * texture. Not the primary detector.
  */
-export function analyzeAxis(signal: Float32Array, pMin: number, pMax: number): AxisEstimate {
+export function analyzeAxis(
+  signal: Float32Array,
+  pMin: number,
+  pMax: number,
+): { period: number; strength: number; dominance: number } {
   const n = signal.length;
   const maxP = Math.min(pMax, Math.floor(n / 2));
   if (maxP < pMin) return { period: pMin, strength: 0, dominance: 0 };
-
   let mean = 0;
   for (let i = 0; i < n; i++) mean += signal[i];
   mean /= n;
-
   const dev = new Float32Array(n);
   let variance = 0;
   for (let i = 0; i < n; i++) {
@@ -120,7 +103,6 @@ export function analyzeAxis(signal: Float32Array, pMin: number, pMax: number): A
     variance += dev[i] * dev[i];
   }
   if (variance <= 0) return { period: pMin, strength: 0, dominance: 0 };
-
   const corr: number[] = [];
   let peak = -Infinity;
   let peakP = pMin;
@@ -144,10 +126,6 @@ export function analyzeAxis(signal: Float32Array, pMin: number, pMax: number): A
       peakP = p;
     }
   }
-
-  // Recover the fundamental: the smallest period whose correlation is at least
-  // 90% of the peak. A spike train correlates strongly at 2×, 3×, … its true
-  // period, so the raw argmax can be a multiple.
   let fundamental = peakP;
   for (let p = pMin; p <= peakP; p++) {
     if (corr[p] >= 0.9 * peak) {
@@ -155,93 +133,22 @@ export function analyzeAxis(signal: Float32Array, pMin: number, pMax: number): A
       break;
     }
   }
-
   const meanCorr = corrCount > 0 ? corrSum / corrCount : 0;
-  return {
-    period: fundamental,
-    strength: Math.max(0, Math.min(1, peak)),
-    dominance: Math.max(0, peak - meanCorr),
-  };
-}
-
-interface PeakEstimate {
-  /** Median gap between edge peaks, or 0 if too few peaks were found. */
-  period: number;
-  /** Fraction of gaps close to the median — 1 for a perfectly regular grid. */
-  regularity: number;
-}
-
-/**
- * Estimate the axis period from the *median spacing* between prominent edge
- * peaks. Unlike autocorrelation this tolerates jittered cell widths (each cell
- * a few pixels off), which is how real AI upscales look, and reports how
- * regular the spacing is as a confidence signal. `kSd` sets the peak threshold
- * at `mean + kSd·sd`: a higher value keeps only strong (real-boundary) edges,
- * used to see past regular sub-cell texture.
- */
-export function peakSpacingAxis(
-  signal: Float32Array,
-  pMin: number,
-  pMax: number,
-  kSd = 0.25,
-): PeakEstimate {
-  const n = signal.length;
-  if (n < pMin * 3) return { period: 0, regularity: 0 };
-
-  let mean = 0;
-  for (let i = 0; i < n; i++) mean += signal[i];
-  mean /= n;
-  let sd = 0;
-  for (let i = 0; i < n; i++) sd += (signal[i] - mean) ** 2;
-  sd = Math.sqrt(sd / n);
-  const threshold = mean + kSd * sd;
-  const minSep = Math.max(2, Math.floor(pMin * 0.75));
-
-  const peaks: number[] = [];
-  for (let i = 1; i < n - 1; i++) {
-    if (signal[i] < threshold) continue;
-    if (signal[i] < signal[i - 1] || signal[i] < signal[i + 1]) continue;
-    const last = peaks[peaks.length - 1];
-    if (last !== undefined && i - last < minSep) {
-      if (signal[i] > signal[last]) peaks[peaks.length - 1] = i; // keep the taller of two close peaks
-    } else {
-      peaks.push(i);
-    }
-  }
-  if (peaks.length < 3) return { period: 0, regularity: 0 };
-
-  const gaps: number[] = [];
-  for (let i = 1; i < peaks.length; i++) {
-    const g = peaks[i] - peaks[i - 1];
-    if (g >= pMin && g <= pMax) gaps.push(g);
-  }
-  if (gaps.length < 2) return { period: 0, regularity: 0 };
-
-  gaps.sort((a, b) => a - b);
-  const median = gaps[gaps.length >> 1];
-  const tol = Math.max(1, median * 0.15);
-  let near = 0;
-  for (const g of gaps) if (Math.abs(g - median) <= tol) near++;
-  return { period: median, regularity: near / gaps.length };
-}
-
-interface Box {
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
+  return { period: fundamental, strength: Math.max(0, Math.min(1, peak)), dominance: Math.max(0, peak - meanCorr) };
 }
 
 /**
  * Bounding box of "content" — pixels whose luminance differs from the flat
- * background (estimated from the corners) by more than a small threshold. Lets
- * grid clarity ignore a large empty background (a sprite centered on white),
- * which would otherwise swamp the signal. Falls back to the whole image.
+ * background (estimated from the corners). Lets detection ignore a large empty
+ * background (a sprite centered on white). Falls back to the whole image.
  */
 function contentBox(lum: Float32Array, width: number, height: number): Box {
   const bg = (lum[0] + lum[width - 1] + lum[(height - 1) * width] + lum[height * width - 1]) / 4;
   const thresh = 12;
-  let x0 = width, y0 = height, x1 = -1, y1 = -1;
+  let x0 = width;
+  let y0 = height;
+  let x1 = -1;
+  let y1 = -1;
   for (let y = 0; y < height; y++) {
     const row = y * width;
     for (let x = 0; x < width; x++) {
@@ -257,122 +164,101 @@ function contentBox(lum: Float32Array, width: number, height: number): Box {
   return { x0, y0, x1: x1 + 1, y1: y1 + 1 };
 }
 
-/** Mean per-cell luminance variance for cells of size `cell` tiling `box`. */
-function boxCellVariance(lum: Float32Array, width: number, box: Box, cell: number): number {
-  const bw = box.x1 - box.x0;
-  const bh = box.y1 - box.y0;
-  const gw = Math.max(1, Math.round(bw / cell));
-  const gh = Math.max(1, Math.round(bh / cell));
-  const cw = bw / gw;
-  const ch = bh / gh;
+/**
+ * Phase of the grid lines for cell size `cell` on one axis, within [a, b):
+ * the offset (in [0, cell)) that best aligns grid lines to strong edges.
+ */
+function bestPhase(signal: Float32Array, cell: number, a: number, b: number): number {
+  let total = 0;
+  for (let i = a; i < b; i++) total += signal[i];
+  if (total <= 0) return 0;
+  let best = 0;
+  let bestScore = -1;
+  for (let ph = 0; ph < cell; ph += 0.5) {
+    let on = 0;
+    let cnt = 0;
+    for (let p = a + ph; p < b - 0.5; p += cell) {
+      on += signal[Math.round(p)];
+      cnt++;
+    }
+    if (cnt === 0) continue;
+    const off = (total - on) / (b - a - cnt);
+    const score = on / cnt / Math.max(off, 1e-6);
+    if (score > bestScore) {
+      bestScore = score;
+      best = ph;
+    }
+  }
+  return best;
+}
+
+/** Grid boundary positions within [a, b) for a cell offset by phase `ph`. */
+function boundariesIn(a: number, b: number, cell: number, ph: number): number[] {
+  const arr = [a];
+  for (let p = a + ph; p < b - 0.5; p += cell) if (p > a + 0.5) arr.push(Math.round(p));
+  arr.push(b);
+  return arr;
+}
+
+/** Integral images for O(1) box mean/variance queries. */
+interface Integrals {
+  i1: Float64Array;
+  i2: Float64Array;
+  w1: number;
+}
+
+function buildIntegrals(lum: Float32Array, width: number, height: number): Integrals {
+  const w1 = width + 1;
+  const i1 = new Float64Array(w1 * (height + 1));
+  const i2 = new Float64Array(w1 * (height + 1));
+  for (let y = 0; y < height; y++) {
+    let r1 = 0;
+    let r2 = 0;
+    for (let x = 0; x < width; x++) {
+      const v = lum[y * width + x];
+      r1 += v;
+      r2 += v * v;
+      i1[(y + 1) * w1 + (x + 1)] = i1[y * w1 + (x + 1)] + r1;
+      i2[(y + 1) * w1 + (x + 1)] = i2[y * w1 + (x + 1)] + r2;
+    }
+  }
+  return { i1, i2, w1 };
+}
+
+function boxVar(I: Integrals, ax: number, ay: number, bx: number, by: number): number {
+  const n = (bx - ax) * (by - ay);
+  if (n <= 0) return 0;
+  const { i1, i2, w1 } = I;
+  const s1 = i1[by * w1 + bx] - i1[ay * w1 + bx] - i1[by * w1 + ax] + i1[ay * w1 + ax];
+  const s2 = i2[by * w1 + bx] - i2[ay * w1 + bx] - i2[by * w1 + ax] + i2[ay * w1 + ax];
+  return s2 / n - (s1 / n) ** 2;
+}
+
+/** Mean within-cell variance for a phase-aligned grid over the content box. */
+function cellVariance(I: Integrals, box: Box, cell: number, phx: number, phy: number): number {
+  const xb = boundariesIn(box.x0, box.x1, cell, phx);
+  const yb = boundariesIn(box.y0, box.y1, cell, phy);
   let total = 0;
   let cells = 0;
-  for (let gy = 0; gy < gh; gy++) {
-    const y0 = box.y0 + Math.floor(gy * ch);
-    const y1 = box.y0 + Math.max(Math.floor(gy * ch) + 1, Math.floor((gy + 1) * ch));
-    for (let gx = 0; gx < gw; gx++) {
-      const x0 = box.x0 + Math.floor(gx * cw);
-      const x1 = box.x0 + Math.max(Math.floor(gx * cw) + 1, Math.floor((gx + 1) * cw));
-      let sum = 0;
-      let sq = 0;
-      let cnt = 0;
-      for (let y = y0; y < y1; y++) {
-        const row = y * width;
-        for (let x = x0; x < x1; x++) {
-          const v = lum[row + x];
-          sum += v;
-          sq += v * v;
-          cnt++;
-        }
-      }
-      if (cnt > 0) {
-        total += sq / cnt - (sum / cnt) ** 2;
-        cells++;
-      }
+  for (let gy = 0; gy < yb.length - 1; gy++) {
+    const ya = yb[gy];
+    const yb2 = Math.max(ya + 1, yb[gy + 1]);
+    for (let gx = 0; gx < xb.length - 1; gx++) {
+      const xa = xb[gx];
+      const xb2 = Math.max(xa + 1, xb[gx + 1]);
+      total += boxVar(I, xa, ya, xb2, yb2);
+      cells++;
     }
   }
   return cells > 0 ? total / cells : 0;
-}
-
-/**
- * "Grid clarity": how sharply within-cell variance jumps when coarsening from
- * the detected cell to double it. A true grid breaks (large jump) because
- * coarsening merges distinct logical pixels; smoothly-detailed art with no real
- * grid (the fabric-texture case) barely changes. Measured over the content
- * bounding box so a flat background does not dilute it. Returned in ~[0, 1].
- */
-function gridClarity(lum: Float32Array, width: number, box: Box, cell: number): number {
-  const vCell = boxCellVariance(lum, width, box, cell);
-  const vDouble = boxCellVariance(lum, width, box, Math.min(MAX_CELL_SIZE, cell * 2));
-  const ratio = vDouble / Math.max(vCell, 1e-3);
-  // ratio ~1 → no grid (smooth); ratio ≫1 → coarsening broke a real grid.
-  return Math.max(0, Math.min(1, (ratio - 1.3) / 2));
-}
-
-/**
- * Reconcile an axis period against sub-cell texture. Real cell boundaries are
- * stronger edges than fabric/mesh/dither texture, so we re-measure peak spacing
- * keeping only strong edges: if that spacing is a clean 2–4× multiple of the
- * all-edge spacing and stays regular, the all-edge estimate had locked onto
- * texture and we adopt the coarser, true period. A normal (untextured) grid is
- * unaffected — its strong spacing equals its base spacing (ratio ~1).
- */
-function reconcilePeriod(signal: Float32Array, base: PeakEstimate): PeakEstimate {
-  if (base.period <= 0) return base;
-  const strong = peakSpacingAxis(signal, MIN_CELL_SIZE, MAX_CELL_SIZE, 1.1);
-  if (strong.period <= 0 || strong.regularity < 0.5) return base;
-  const ratio = strong.period / base.period;
-  const mult = Math.round(ratio);
-  if (mult >= 2 && mult <= 4 && Math.abs(ratio - mult) <= 0.15) {
-    return strong;
-  }
-  return base;
-}
-
-/**
- * Sub-pixel refinement for a rigid grid: search cell size near `coarse` and the
- * grid-line phase to maximize comb alignment — mean edge energy *on* grid lines
- * vs *off* them. Recovers the exact cell size and the offset of the first grid
- * line, so sampling lands on the source's real pixel boundaries instead of
- * assuming the grid starts at 0 (a small offset otherwise smears fine detail).
- */
-function fitAxis(signal: Float32Array, coarse: number): { cell: number; offset: number } {
-  const n = signal.length;
-  let total = 0;
-  for (let i = 0; i < n; i++) total += signal[i];
-  if (total <= 0) return { cell: coarse, offset: 0 };
-
-  const lo = Math.max(MIN_CELL_SIZE, coarse - 1.5);
-  const hi = Math.min(MAX_CELL_SIZE, coarse + 1.5);
-  let best = { cell: coarse, offset: 0, score: -1 };
-  for (let p = lo; p <= hi; p += 0.05) {
-    for (let ph = 0; ph < p; ph += 0.25) {
-      let on = 0;
-      let cnt = 0;
-      for (let pos = ph; pos < n - 0.5; pos += p) {
-        on += signal[Math.round(pos)];
-        cnt++;
-      }
-      if (cnt === 0 || cnt >= n) continue;
-      const offMean = (total - on) / (n - cnt);
-      const score = on / cnt / Math.max(offMean, 1e-6);
-      if (score > best.score) best = { cell: p, offset: ph, score };
-    }
-  }
-  return { cell: best.cell, offset: best.offset };
 }
 
 function clampInt(value: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(value)));
 }
 
-/** Cell count for a phased axis grid. */
 function axisGridCount(length: number, cell: number, offset: number): number {
   return Math.max(1, axisBoundaries(length, cell, offset).length - 1);
-}
-
-function downgrade(c: Confidence): Confidence {
-  return c === 'high' ? 'medium' : 'low';
 }
 
 /** Build a detection result from an explicit output size (manual override). */
@@ -390,114 +276,88 @@ export function gridFromTarget(
 }
 
 /**
- * Detect the implied grid. Per axis, the period comes from median peak spacing
- * (jitter-robust), falling back to autocorrelation when too few peaks are
- * found; harmonic aliases are then resolved by within-cell-variance coarsening.
- * Confidence blends peak regularity, autocorrelation strength, and agreement
- * between the two, and a low-confidence oversized grid is capped.
+ * Detect the implied grid via the within-cell-variance dip. Sweeps candidate
+ * cell sizes, phase-aligns each, and finds where variance collapses (a real
+ * grid). Confidence is the dip depth; a low-confidence oversized grid is capped.
  */
 export function detectGrid(image: RGBAImage): GridDetectionResult {
   const { width, height } = image;
   const lum = toLuminance(image);
-  const rowSig = rowEdgeSignal(lum, width, height);
-  const colSig = colEdgeSignal(lum, width, height);
   const box = contentBox(lum, width, height);
-  // A sprite inset from the image edges has a real grid phase to recover;
-  // full-frame art (texture, benchmark tiles) starts at 0 and must not be
-  // sub-pixel-fitted (that would destabilize the robust median estimate).
   const marginX = box.x0 > 2 || box.x1 < width - 2;
   const marginY = box.y0 > 2 || box.y1 < height - 2;
 
-  const rowPk = peakSpacingAxis(rowSig, MIN_CELL_SIZE, MAX_CELL_SIZE);
-  const colPk = peakSpacingAxis(colSig, MIN_CELL_SIZE, MAX_CELL_SIZE);
-  const rowAc = analyzeAxis(rowSig, MIN_CELL_SIZE, MAX_CELL_SIZE);
-  const colAc = analyzeAxis(colSig, MIN_CELL_SIZE, MAX_CELL_SIZE);
+  const I = buildIntegrals(lum, width, height);
+  const colSig = colEdgeSignal(lum, width, box);
+  const rowSig = rowEdgeSignal(lum, width, box);
 
-  // Harmonic arbitration: if the base spacing locked onto regular sub-cell
-  // texture, adopt the coarser strong-edge spacing (the true cell).
-  const rowRec = reconcilePeriod(rowSig, rowPk);
-  const colRec = reconcilePeriod(colSig, colPk);
+  const boxW = box.x1 - box.x0;
+  const boxH = box.y1 - box.y0;
+  const maxCell = Math.max(MIN_CELL_SIZE, Math.min(MAX_CELL_SIZE, Math.floor(Math.min(boxW, boxH) / 3)));
 
-  // Period per axis: prefer the jitter-robust peak spacing; fall back to
-  // autocorrelation when too few peaks were found.
-  const baseH = rowRec.period > 0 ? rowRec.period : rowAc.period;
-  const baseW = colRec.period > 0 ? colRec.period : colAc.period;
+  // Variance curve across candidate cell sizes, each phase-aligned.
+  const v: number[] = [];
+  const phxArr: number[] = [];
+  const phyArr: number[] = [];
+  for (let s = MIN_CELL_SIZE; s <= maxCell; s++) {
+    const phx = bestPhase(colSig, s, box.x0, box.x1);
+    const phy = bestPhase(rowSig, s, box.y0, box.y1);
+    v[s] = cellVariance(I, box, s, phx, phy);
+    phxArr[s] = phx;
+    phyArr[s] = phy;
+  }
 
-  const regularity = (rowRec.regularity + colRec.regularity) / 2;
-  const acStrength = (rowAc.strength + colAc.strength) / 2;
+  // Deepest variance dip: cell size markedly more uniform than its neighbors.
+  const dipAt = (s: number): number => Math.min(v[s - 1], v[s + 1]) / Math.max(v[s], 1e-6);
+  let bestDip = 0;
+  let bestCell = MIN_CELL_SIZE;
+  for (let s = MIN_CELL_SIZE + 1; s < maxCell; s++) {
+    const d = dipAt(s);
+    if (d > bestDip) {
+      bestDip = d;
+      bestCell = s;
+    }
+  }
+  // The true cell is the finest strong dip. On real art its divisors dip more
+  // shallowly (jitter and detail break their uniformity), so the first cell that
+  // reaches near the best dip is the fundamental — not a sub-cell texture period
+  // (which does not dip) nor a coarse multiple (which merges pixels).
+  let cell = bestCell;
+  for (let s = MIN_CELL_SIZE + 1; s < bestCell; s++) {
+    if (dipAt(s) >= 0.85 * bestDip) {
+      cell = s;
+      break;
+    }
+  }
+  const dip = maxCell > MIN_CELL_SIZE + 1 ? dipAt(Math.max(MIN_CELL_SIZE + 1, Math.min(maxCell - 1, cell))) : 1;
 
-  // Sub-pixel cell size + grid-line phase for rigid axes; jittered axes keep the
-  // median period at phase 0 (no single exact cell to fit).
-  let cellW = baseW;
-  let cellH = baseH;
+  let confidence: Confidence = dip >= DIP_HIGH ? 'high' : dip >= DIP_MEDIUM ? 'medium' : 'low';
+
+  // Per-axis grid + phase. Sprites with a margin keep the detected phase (grid
+  // lines don't start at the origin); full-frame art uses exact equal division.
+  let cellW = cell;
+  let cellH = cell;
   let offsetX = 0;
   let offsetY = 0;
-  if (marginX && colRec.regularity >= RIGID_REGULARITY) {
-    const f = fitAxis(colSig, baseW);
-    cellW = f.cell;
-    offsetX = f.offset;
-  }
-  if (marginY && rowRec.regularity >= RIGID_REGULARITY) {
-    const f = fitAxis(rowSig, baseH);
-    cellH = f.cell;
-    offsetY = f.offset;
-  }
-
-  const larger = Math.max(cellW, cellH);
-  const smaller = Math.min(cellW, cellH);
-  const divergence = larger > 0 ? (larger - smaller) / larger : 1;
-  // Scalar cell used for non-phased grid counts: average when the axes agree,
-  // otherwise the more regular axis.
-  const cellSize = Math.max(
-    MIN_CELL_SIZE,
-    Math.min(
-      MAX_CELL_SIZE,
-      divergence <= 0.15 ? (cellW + cellH) / 2 : colRec.regularity >= rowRec.regularity ? cellW : cellH,
-    ),
-  );
-
-  // Grid clarity: does the detected cell mark a real grid (variance jumps when
-  // coarsening past it) or just a slice of smooth detail (no jump)? This is what
-  // separates a genuine sprite grid from regular fabric/mesh texture.
-  const clarity = gridClarity(lum, width, box, cellSize);
-
-  let confidence: Confidence;
-  if (regularity >= 0.7 && clarity >= 0.5 && divergence <= 0.15) {
-    confidence = 'high';
-  } else if ((regularity >= 0.45 && clarity >= 0.3) || (acStrength >= 0.55 && clarity >= 0.5)) {
-    confidence = 'medium';
-  } else {
-    confidence = 'low';
-  }
-  if (divergence > 0.15) confidence = downgrade(confidence);
-
-  // With no phase, use exact equal division (round of width/cell) so the grid
-  // count is stable. With a phase, tile from the offset (edge cells may be
-  // partial background).
   let gridWidth: number;
   let gridHeight: number;
-  if (offsetX === 0) {
-    gridWidth = clampInt(width / cellSize, 1, MAX_OUTPUT_SIZE);
+  if (marginX) {
+    offsetX = (((box.x0 + phxArr[cell]) % cell) + cell) % cell;
+    gridWidth = clampInt(axisGridCount(width, cell, offsetX), 1, MAX_OUTPUT_SIZE);
+  } else {
+    gridWidth = clampInt(width / cell, 1, MAX_OUTPUT_SIZE);
     cellW = width / gridWidth;
-  } else {
-    gridWidth = clampInt(axisGridCount(width, cellW, offsetX), 1, MAX_OUTPUT_SIZE);
   }
-  if (offsetY === 0) {
-    gridHeight = clampInt(height / cellSize, 1, MAX_OUTPUT_SIZE);
+  if (marginY) {
+    offsetY = (((box.y0 + phyArr[cell]) % cell) + cell) % cell;
+    gridHeight = clampInt(axisGridCount(height, cell, offsetY), 1, MAX_OUTPUT_SIZE);
+  } else {
+    gridHeight = clampInt(height / cell, 1, MAX_OUTPUT_SIZE);
     cellH = height / gridHeight;
-  } else {
-    gridHeight = clampInt(axisGridCount(height, cellH, offsetY), 1, MAX_OUTPUT_SIZE);
   }
 
-  // A large grid from anything but a confident, regular signal is the signature
-  // of sub-cell texture rather than an art grid.
-  if (confidence !== 'high' && Math.max(gridWidth, gridHeight) > FINE_GRID_LIMIT && regularity < 0.8) {
-    confidence = 'low';
-  }
-
-  // Size-sanity cap: when we don't fully trust an oversized estimate (or it
-  // simply exceeds the output limit), fall back to an equal-division grid at a
-  // usable resolution, preserving aspect ratio.
+  // Size-sanity cap: when we don't trust an oversized estimate (or it exceeds
+  // the output limit), fall back to an equal-division grid at a usable size.
   const oversized = Math.max(gridWidth, gridHeight) > MAX_OUTPUT_SIZE;
   if (oversized || (confidence !== 'high' && Math.max(gridWidth, gridHeight) > SOFT_MAX_GRID)) {
     const target = oversized ? MAX_OUTPUT_SIZE : SOFT_MAX_GRID;
