@@ -151,6 +151,30 @@ describe('grid detection', () => {
     expect(Math.abs(det.gridWidth - gw)).toBeLessThanOrEqual(1);
     expect(Math.abs(det.gridHeight - gh)).toBeLessThanOrEqual(1);
   });
+
+  it('confidently detects a clean sprite on a large flat background', () => {
+    // A small gridded sprite centered on white — most cells are empty. Grid
+    // clarity must ignore the background (measure only the content box), or a
+    // perfectly crisp sprite gets flagged low-confidence.
+    const DARK: RGBA = { r: 40, g: 40, b: 40, a: 255 };
+    const LIGHT: RGBA = { r: 210, g: 210, b: 210, a: 255 };
+    const W = 400, H = 400, cell = 10, g = 16, off = 120;
+    const img = makeImage(W, H);
+    for (let i = 0; i < W * H; i++) { // fill background
+      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 245;
+      img.data[i * 4 + 3] = 255;
+    }
+    for (let gy = 0; gy < g; gy++) {
+      for (let gx = 0; gx < g; gx++) {
+        const c = (gx + gy) % 2 ? LIGHT : DARK;
+        for (let y = 0; y < cell; y++) for (let x = 0; x < cell; x++) put(img, off + gx * cell + x, off + gy * cell + y, c);
+      }
+    }
+    const det = detectGrid(img);
+    expect(det.gridWidth).toBe(40); // 400 / 10
+    expect(det.gridHeight).toBe(40);
+    expect(det.confidence).toBe('high');
+  });
 });
 
 // ── Grid detection: texture robustness (regression) ─────────────────────────

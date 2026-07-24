@@ -221,32 +221,61 @@ export function peakSpacingAxis(
   return { period: median, regularity: near / gaps.length };
 }
 
+interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 /**
- * Mean per-cell luminance variance for a square grid of `cell` source pixels.
- * Low = cells are internally uniform. Comparing this across cell sizes reveals
- * whether a real grid exists: coarsening past the true cell merges distinct
- * pixels and variance jumps, whereas detail/texture (no true grid) rises
- * smoothly.
+ * Bounding box of "content" — pixels whose luminance differs from the flat
+ * background (estimated from the corners) by more than a small threshold. Lets
+ * grid clarity ignore a large empty background (a sprite centered on white),
+ * which would otherwise swamp the signal. Falls back to the whole image.
  */
-function withinCellVariance(lum: Float32Array, width: number, height: number, cell: number): number {
-  const gw = Math.max(1, Math.round(width / cell));
-  const gh = Math.max(1, Math.round(height / cell));
-  const cw = width / gw;
-  const ch = height / gh;
+function contentBox(lum: Float32Array, width: number, height: number): Box {
+  const bg = (lum[0] + lum[width - 1] + lum[(height - 1) * width] + lum[height * width - 1]) / 4;
+  const thresh = 12;
+  let x0 = width, y0 = height, x1 = -1, y1 = -1;
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      if (Math.abs(lum[row + x] - bg) > thresh) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  if (x1 < x0 || y1 < y0) return { x0: 0, y0: 0, x1: width, y1: height };
+  return { x0, y0, x1: x1 + 1, y1: y1 + 1 };
+}
+
+/** Mean per-cell luminance variance for cells of size `cell` tiling `box`. */
+function boxCellVariance(lum: Float32Array, width: number, box: Box, cell: number): number {
+  const bw = box.x1 - box.x0;
+  const bh = box.y1 - box.y0;
+  const gw = Math.max(1, Math.round(bw / cell));
+  const gh = Math.max(1, Math.round(bh / cell));
+  const cw = bw / gw;
+  const ch = bh / gh;
   let total = 0;
   let cells = 0;
   for (let gy = 0; gy < gh; gy++) {
-    const y0 = Math.floor(gy * ch);
-    const y1 = Math.max(y0 + 1, Math.floor((gy + 1) * ch));
+    const y0 = box.y0 + Math.floor(gy * ch);
+    const y1 = box.y0 + Math.max(Math.floor(gy * ch) + 1, Math.floor((gy + 1) * ch));
     for (let gx = 0; gx < gw; gx++) {
-      const x0 = Math.floor(gx * cw);
-      const x1 = Math.max(x0 + 1, Math.floor((gx + 1) * cw));
+      const x0 = box.x0 + Math.floor(gx * cw);
+      const x1 = box.x0 + Math.max(Math.floor(gx * cw) + 1, Math.floor((gx + 1) * cw));
       let sum = 0;
       let sq = 0;
       let cnt = 0;
       for (let y = y0; y < y1; y++) {
+        const row = y * width;
         for (let x = x0; x < x1; x++) {
-          const v = lum[y * width + x];
+          const v = lum[row + x];
           sum += v;
           sq += v * v;
           cnt++;
@@ -265,11 +294,13 @@ function withinCellVariance(lum: Float32Array, width: number, height: number, ce
  * "Grid clarity": how sharply within-cell variance jumps when coarsening from
  * the detected cell to double it. A true grid breaks (large jump) because
  * coarsening merges distinct logical pixels; smoothly-detailed art with no real
- * grid (the fabric-texture case) barely changes. Returned in ~[0, 1].
+ * grid (the fabric-texture case) barely changes. Measured over the content
+ * bounding box so a flat background does not dilute it. Returned in ~[0, 1].
  */
 function gridClarity(lum: Float32Array, width: number, height: number, cell: number): number {
-  const vCell = withinCellVariance(lum, width, height, cell);
-  const vDouble = withinCellVariance(lum, width, height, Math.min(MAX_CELL_SIZE, cell * 2));
+  const box = contentBox(lum, width, height);
+  const vCell = boxCellVariance(lum, width, box, cell);
+  const vDouble = boxCellVariance(lum, width, box, Math.min(MAX_CELL_SIZE, cell * 2));
   const ratio = vDouble / Math.max(vCell, 1e-3);
   // ratio ~1 → no grid (smooth); ratio ≫1 → coarsening broke a real grid.
   return Math.max(0, Math.min(1, (ratio - 1.3) / 2));
