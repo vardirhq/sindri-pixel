@@ -103,7 +103,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sindri-pixel-${{ runner.os }}
-          path: src-tauri/target/release/bundle/**/*
+          # Only the final installers per format. A bare `bundle/**/*` also
+          # scoops up the AppImage's unpacked AppDir and the .deb's build tree
+          # (bundled *.so libraries, WebKit helpers, control files, icons),
+          # which then land on the release as ~130 junk assets.
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
 
   release:
