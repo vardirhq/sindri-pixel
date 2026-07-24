@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-beta.2
+
+### Changed
+
+- Made `mode` cell sampling in AI-art reconstruction center-weighted: each cell's dominant-color vote now weights source pixels by their distance from the cell centre, so a slightly-misaligned or fractional grid boundary can no longer let an edge color outvote the cell's true central color. Small central details (like an eye pixel) survive where a plain pixel count would blend them away. Clean, well-aligned cells are unaffected.
+
 ## 0.1.0-beta.1
 
 ### Added
