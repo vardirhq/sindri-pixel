@@ -60,6 +60,30 @@ function logical8x8(): (RGBA | null)[][] {
   );
 }
 
+// Spatially-coherent random logical art — like real sprites (and unlike a
+// perfect checker, which is degenerate for grid detection because every integer
+// divisor of the true cell tiles it just as uniformly).
+function realisticLogical(gw: number, gh: number, seed: number, coherence = 0): RGBA[][] {
+  const pal: RGBA[] = [RED, BLUE, GREEN, { r: 230, g: 215, b: 60, a: 255 }, { r: 30, g: 30, b: 45, a: 255 }];
+  let s = seed >>> 0;
+  const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+  const grid: RGBA[][] = [];
+  for (let y = 0; y < gh; y++) {
+    const row: RGBA[] = [];
+    for (let x = 0; x < gw; x++) {
+      const left = row[x - 1];
+      // `coherence` copies the left neighbor sometimes (flat regions, like real
+      // art); otherwise pick a color distinct from the left so a boundary exists.
+      if (x > 0 && rnd() < coherence) { row.push(left); continue; }
+      let c = pal[Math.floor(rnd() * pal.length)];
+      if (x > 0) while (c === left) c = pal[Math.floor(rnd() * pal.length)];
+      row.push(c);
+    }
+    grid.push(row);
+  }
+  return grid;
+}
+
 // ── Grid detection ──────────────────────────────────────────────────────────
 
 describe('grid detection', () => {
@@ -83,25 +107,24 @@ describe('grid detection', () => {
   });
 
   it('detects the grid on a jittered, anti-aliased raster (the AI-art case)', () => {
-    // Render an 8×8 logical sprite where each cell boundary is jittered by a
+    // Render a 16×16 logical sprite where each cell boundary is jittered by a
     // few pixels and edges are blended — i.e. what AI "pixel art" actually
     // looks like, not a clean multiple.
-    const logical = logical8x8();
-    const nominal = 16;
-    // Deterministic pseudo-random jitter per boundary.
-    const jitter = (i: number) => ((Math.sin(i * 12.9898) * 43758.5453) % 1) * 4 - 2;
+    const gw = 16, gh = 16, nominal = 12;
+    const logical = realisticLogical(gw, gh, 99);
+    const jitter = (i: number) => ((Math.sin(i * 12.9898) * 43758.5453) % 1) * 3 - 1.5;
     const bounds = (count: number) => {
       const b = [0];
       for (let i = 1; i < count; i++) b.push(Math.round(i * nominal + jitter(i)));
       b.push(count * nominal);
       return b;
     };
-    const xb = bounds(8);
-    const yb = bounds(8);
-    const img = makeImage(8 * nominal, 8 * nominal);
-    for (let gy = 0; gy < 8; gy++) {
-      for (let gx = 0; gx < 8; gx++) {
-        const c = logical[gy][gx]!;
+    const xb = bounds(gw);
+    const yb = bounds(gh);
+    const img = makeImage(xb[gw], yb[gh]);
+    for (let gy = 0; gy < gh; gy++) {
+      for (let gx = 0; gx < gw; gx++) {
+        const c = logical[gy][gx];
         for (let y = yb[gy]; y < yb[gy + 1]; y++) {
           for (let x = xb[gx]; x < xb[gx + 1]; x++) {
             // Blend edge pixels toward a mid-gray to mimic anti-aliasing.
@@ -113,14 +136,9 @@ describe('grid detection', () => {
     }
 
     const det = detectGrid(img);
-    // Should land on (or very near) the true 8×8 grid despite the jitter.
-    expect(det.gridWidth).toBeGreaterThanOrEqual(7);
-    expect(det.gridWidth).toBeLessThanOrEqual(9);
-
-    // And a full reconstruction at the detected grid should recover the two
-    // dominant colors, not a smear of blend colors.
-    const { result } = reconstructPixelArt(img, { ...DEFAULT_OPTIONS });
-    expect(countDistinctColors(result)).toBeLessThanOrEqual(4);
+    // Should land on (or very near) the true 16×16 grid despite the jitter.
+    expect(Math.abs(det.gridWidth - gw)).toBeLessThanOrEqual(1);
+    expect(Math.abs(det.gridHeight - gh)).toBeLessThanOrEqual(1);
   });
 
   it('honors an explicit target size', () => {
@@ -129,6 +147,88 @@ describe('grid detection', () => {
     expect(det.gridWidth).toBe(32);
     expect(det.gridHeight).toBe(32);
     expect(det.cellSize).toBeCloseTo(4, 0);
+  });
+
+  it('recovers a jittered-cell grid via median peak spacing', () => {
+    // 20×16 logical checker with ~10px cells jittered ±2px — a variable-width
+    // grid that defeats rigid autocorrelation but not median peak spacing.
+    const DARK: RGBA = { r: 35, g: 40, b: 55, a: 255 };
+    const LIGHT: RGBA = { r: 210, g: 200, b: 190, a: 255 };
+    const gw = 20, gh = 16, cell = 10;
+    const rng = (() => { let s = 7; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
+    const xb = [0]; for (let i = 1; i < gw; i++) xb.push(Math.round(i * cell + (rng() - 0.5) * 4)); xb.push(gw * cell);
+    const yb = [0]; for (let i = 1; i < gh; i++) yb.push(Math.round(i * cell + (rng() - 0.5) * 4)); yb.push(gh * cell);
+    const img = makeImage(xb[gw], yb[gh]);
+    for (let gy = 0; gy < gh; gy++) {
+      for (let gx = 0; gx < gw; gx++) {
+        const c = (gx + gy) % 2 ? LIGHT : DARK;
+        for (let y = yb[gy]; y < yb[gy + 1]; y++) for (let x = xb[gx]; x < xb[gx + 1]; x++) put(img, x, y, c);
+      }
+    }
+    const det = detectGrid(img);
+    expect(Math.abs(det.gridWidth - gw)).toBeLessThanOrEqual(1);
+    expect(Math.abs(det.gridHeight - gh)).toBeLessThanOrEqual(1);
+  });
+
+  it('confidently detects a clean sprite on a large flat background', () => {
+    // A small gridded sprite centered on white — most cells are empty. Grid
+    // clarity must ignore the background (measure only the content box), or a
+    // perfectly crisp sprite gets flagged low-confidence.
+    const DARK: RGBA = { r: 40, g: 40, b: 40, a: 255 };
+    const LIGHT: RGBA = { r: 210, g: 210, b: 210, a: 255 };
+    const W = 400, H = 400, cell = 10, g = 16, off = 120;
+    const img = makeImage(W, H);
+    for (let i = 0; i < W * H; i++) { // fill background
+      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 245;
+      img.data[i * 4 + 3] = 255;
+    }
+    for (let gy = 0; gy < g; gy++) {
+      for (let gx = 0; gx < g; gx++) {
+        const c = (gx + gy) % 2 ? LIGHT : DARK;
+        for (let y = 0; y < cell; y++) for (let x = 0; x < cell; x++) put(img, off + gx * cell + x, off + gy * cell + y, c);
+      }
+    }
+    const det = detectGrid(img);
+    expect(det.gridWidth).toBe(40); // 400 / 10
+    expect(det.gridHeight).toBe(40);
+    expect(det.confidence).toBe('high');
+  });
+
+  it('detects and corrects a grid phase offset', () => {
+    // A checker sprite whose grid does NOT start at (0,0) — placed at a
+    // non-multiple pixel offset. Phase detection must recover the offset so
+    // sampling lands on real pixel boundaries; otherwise every cell straddles
+    // two logical pixels and the checker smears into many blended colors.
+    const DARK: RGBA = { r: 40, g: 40, b: 40, a: 255 };
+    const LIGHT: RGBA = { r: 210, g: 210, b: 210, a: 255 };
+    const W = 420, H = 420, cell = 10, g = 20, off = 13; // 13 mod 10 = 3px phase
+    const img = makeImage(W, H);
+    for (let i = 0; i < W * H; i++) {
+      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 245;
+      img.data[i * 4 + 3] = 255;
+    }
+    for (let gy = 0; gy < g; gy++) {
+      for (let gx = 0; gx < g; gx++) {
+        const c = (gx + gy) % 2 ? LIGHT : DARK;
+        for (let y = 0; y < cell; y++) for (let x = 0; x < cell; x++) put(img, off + gx * cell + x, off + gy * cell + y, c);
+      }
+    }
+    const det = detectGrid(img);
+    expect(det.confidence).toBe('high');
+    // A grid phase was recovered (grid does not start at the origin).
+    expect(det.offsetX).toBeGreaterThan(0);
+    expect(det.offsetY).toBeGreaterThan(0);
+
+    // Reconstructed cleanly: the checker collapses back to its two ink colors
+    // (plus at most a couple of boundary cells), not a smear of blends.
+    const { result } = reconstructPixelArt(img, {
+      ...DEFAULT_OPTIONS,
+      paletteSize: 100000,
+      mergeSimilarColors: false,
+      removeAntiAliasing: false,
+      removeIsolatedPixels: false,
+    });
+    expect(countDistinctColors(result)).toBeLessThanOrEqual(5);
   });
 });
 
@@ -156,22 +256,46 @@ describe('grid detection — texture robustness', () => {
     expect(highConfidence(row)).toBe(false);
   });
 
+  it('sees past regular sub-cell texture to the true, coarser grid', () => {
+    // A genuine 12px grid (realistic art) carrying a regular 6px sub-cell
+    // texture. A naive detector locks onto the 6px texture; the variance-dip
+    // detector recovers the true 12px cell — the texture period doesn't dip
+    // (its cells still hold the real color variation), only the true grid does.
+    const gw = 16, gh = 16, cell = 12;
+    const logical = realisticLogical(gw, gh, 7); // distinct-neighbor art (clear boundaries)
+    const img = makeImage(gw * cell, gh * cell);
+    const clamp = (n: number) => Math.max(0, Math.min(255, n));
+    for (let gy = 0; gy < gh; gy++) {
+      for (let gx = 0; gx < gw; gx++) {
+        const c = logical[gy][gx];
+        for (let y = gy * cell; y < (gy + 1) * cell; y++) {
+          for (let x = gx * cell; x < (gx + 1) * cell; x++) {
+            const m = (((x >> 3) + (y >> 3)) % 2 ? 10 : -10); // ~8px texture (not a divisor of 12)
+            const noise = ((x * 7 + y * 13) % 9) - 4;         // breaks perfect texture periodicity
+            put(img, x, y, { r: clamp(c.r + m + noise), g: clamp(c.g + m + noise), b: clamp(c.b + m + noise), a: 255 });
+          }
+        }
+      }
+    }
+    const det = detectGrid(img);
+    // The true 12px cell, not the 6px texture (which would give a 32×32 grid).
+    expect(det.cellSize).toBeGreaterThan(9);
+    expect(det.gridWidth).toBe(16);
+    expect(det.gridHeight).toBe(16);
+  });
+
   it('caps an oversized low-confidence detection to a usable sprite size', () => {
-    // Synthetic model of the same pathology: a large image whose dominant
-    // structure is an imperfect, noisy ~4px texture. Detection should refuse to
-    // emit hundreds of cells at high confidence.
-    const rng = (() => { let s = 0x2f6e2b1; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
-    // Large enough that a raw 4px period would exceed the fine-grid limit, with
-    // a low-amplitude, heavily-noised texture so the peak is only moderate —
-    // the same combination (oversized grid + mediocre peak) as the real image.
-    const W = 880, H = 760;
+    // A large, detailed image with smooth low-frequency content and fine noise
+    // but *no* real grid — like the laundry image, coarsening never sharply
+    // increases within-cell variance, so grid clarity stays low. Detection must
+    // not confidently emit hundreds of cells; it caps to a usable sprite.
+    const rng = (() => { let s = 12345; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
+    const W = 900, H = 760;
     const img = makeImage(W, H);
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
-        const base = 120 + 30 * Math.sin(x / 41) + 30 * Math.cos(y / 37); // slow large-scale variation
-        const tex = ((x >> 2) + (y >> 2)) % 2 ? 22 : -22;                  // dominant ~4px checker
-        const noise = (rng() - 0.5) * 200;                                 // makes the texture imperfect
-        const v = Math.max(0, Math.min(255, base + tex + noise));
+        const base = 128 + 60 * Math.sin(x / 70) + 50 * Math.cos(y / 55) + 40 * Math.sin((x + y) / 90);
+        const v = Math.max(0, Math.min(255, base + (rng() - 0.5) * 120));
         put(img, x, y, { r: v, g: v, b: v, a: 255 });
       }
     }
@@ -179,8 +303,7 @@ describe('grid detection — texture robustness', () => {
     const det = detectGrid(img);
     // Not trusted as a clean grid…
     expect(det.confidence).not.toBe('high');
-    // …and capped to a sensible sprite resolution (SOFT_MAX_GRID = 128), not
-    // the ~220 cells the raw 4px period would have produced.
+    // …and capped to a sensible sprite resolution (SOFT_MAX_GRID = 128).
     expect(Math.max(det.gridWidth, det.gridHeight)).toBeLessThanOrEqual(128);
     // Aspect ratio is preserved through the cap.
     expect(det.gridWidth / det.gridHeight).toBeCloseTo(W / H, 1);

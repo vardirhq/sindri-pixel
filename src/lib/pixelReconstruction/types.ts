@@ -25,11 +25,16 @@ export interface RGBA {
 }
 
 export interface GridDetectionResult {
-  /** Estimated size of one logical pixel, in source-image pixels. */
+  /** Estimated size of one logical pixel, in source-image pixels (axis average). */
   cellSize: number;
   gridWidth: number;
   gridHeight: number;
   confidence: 'high' | 'medium' | 'low';
+  /** Per-axis cell size and grid-line offset (phase) for aligned resampling. */
+  cellWidth: number;
+  cellHeight: number;
+  offsetX: number;
+  offsetY: number;
 }
 
 /**

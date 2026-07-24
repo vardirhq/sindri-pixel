@@ -32,25 +32,59 @@ function bucketKey(c: RGBA): number {
 }
 
 /**
- * Resample `source` down to a `gridWidth × gridHeight` sprite by taking the
- * mode color of each logical cell.
+ * A phased grid: cells of size `cellWidth × cellHeight` with grid lines offset
+ * from the origin by `offsetX / offsetY`. Detection produces this so sampling
+ * lands cell boundaries on the source's real pixel lattice rather than assuming
+ * the grid starts at (0, 0) — a small offset otherwise smears fine detail.
+ */
+export interface GridSpec {
+  cellWidth: number;
+  cellHeight: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+/** Boundary positions for a phased grid: lines at `offset + k·cell`, spanning [0, length]. */
+export function axisBoundaries(length: number, cell: number, offset: number): number[] {
+  const b = [0];
+  let pos = offset;
+  while (pos <= 0.5) pos += cell; // first interior line strictly inside the image
+  for (; pos < length - 0.5; pos += cell) b.push(Math.round(pos));
+  b.push(length);
+  return b;
+}
+
+/** Equal division into `count` cells (the default phase-0 grid). */
+function equalBoundaries(length: number, count: number): number[] {
+  const b: number[] = [];
+  for (let k = 0; k <= count; k++) b.push(Math.floor((k * length) / count));
+  return b;
+}
+
+/**
+ * Resample `source` down to a low-resolution sprite by taking the mode color of
+ * each logical cell. With `grid` the cells follow the detected phased lattice;
+ * without it the image is divided equally into `gridWidth × gridHeight` cells.
  */
 export function sampleCells(
   source: RGBAImage,
   gridWidth: number,
   gridHeight: number,
   transparentBackground: boolean,
+  grid?: GridSpec,
 ): RGBAImage {
-  const out = createImage(gridWidth, gridHeight);
-  const cellW = source.width / gridWidth;
-  const cellH = source.height / gridHeight;
+  const xb = grid ? axisBoundaries(source.width, grid.cellWidth, grid.offsetX) : equalBoundaries(source.width, gridWidth);
+  const yb = grid ? axisBoundaries(source.height, grid.cellHeight, grid.offsetY) : equalBoundaries(source.height, gridHeight);
+  const gw = xb.length - 1;
+  const gh = yb.length - 1;
+  const out = createImage(gw, gh);
 
-  for (let gy = 0; gy < gridHeight; gy++) {
-    const y0 = Math.floor(gy * cellH);
-    const y1 = Math.max(y0 + 1, Math.floor((gy + 1) * cellH));
-    for (let gx = 0; gx < gridWidth; gx++) {
-      const x0 = Math.floor(gx * cellW);
-      const x1 = Math.max(x0 + 1, Math.floor((gx + 1) * cellW));
+  for (let gy = 0; gy < gh; gy++) {
+    const y0 = yb[gy];
+    const y1 = Math.max(y0 + 1, yb[gy + 1]);
+    for (let gx = 0; gx < gw; gx++) {
+      const x0 = xb[gx];
+      const x1 = Math.max(x0 + 1, xb[gx + 1]);
       setPixel(out, gx, gy, sampleRegion(source, x0, y0, x1, y1, transparentBackground));
     }
   }
@@ -69,17 +103,20 @@ export function sampleCellsAverage(
   gridWidth: number,
   gridHeight: number,
   transparentBackground: boolean,
+  grid?: GridSpec,
 ): RGBAImage {
-  const out = createImage(gridWidth, gridHeight);
-  const cellW = source.width / gridWidth;
-  const cellH = source.height / gridHeight;
+  const xb = grid ? axisBoundaries(source.width, grid.cellWidth, grid.offsetX) : equalBoundaries(source.width, gridWidth);
+  const yb = grid ? axisBoundaries(source.height, grid.cellHeight, grid.offsetY) : equalBoundaries(source.height, gridHeight);
+  const gw = xb.length - 1;
+  const gh = yb.length - 1;
+  const out = createImage(gw, gh);
 
-  for (let gy = 0; gy < gridHeight; gy++) {
-    const y0 = Math.floor(gy * cellH);
-    const y1 = Math.max(y0 + 1, Math.floor((gy + 1) * cellH));
-    for (let gx = 0; gx < gridWidth; gx++) {
-      const x0 = Math.floor(gx * cellW);
-      const x1 = Math.max(x0 + 1, Math.floor((gx + 1) * cellW));
+  for (let gy = 0; gy < gh; gy++) {
+    const y0 = yb[gy];
+    const y1 = Math.max(y0 + 1, yb[gy + 1]);
+    for (let gx = 0; gx < gw; gx++) {
+      const x0 = xb[gx];
+      const x1 = Math.max(x0 + 1, xb[gx + 1]);
       setPixel(out, gx, gy, averageRegion(source, x0, y0, x1, y1, transparentBackground));
     }
   }
