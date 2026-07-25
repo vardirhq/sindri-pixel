@@ -9,6 +9,14 @@ export { sampleCells, sampleCellsAverage } from './cellSampling';
 export { quantize, countDistinctColors, autoPaletteSize } from './paletteQuantize';
 export { removeIsolatedPixels, mergeSimilarColors } from './cleanup';
 export { DEFAULT_OPTIONS, MAX_OUTPUT_SIZE } from './types';
+export {
+  GRID_PRESETS,
+  PALETTE_PRESETS,
+  CLEAN_SPRITE_PRESET,
+  HIGH_DETAIL_PRESET,
+  buildOptions,
+} from './uiOptions';
+export type { GridChoice, PaletteChoice, CleanupSettings, UiChoices } from './uiOptions';
 export type {
   PixelArtOptions,
   SamplingMode,

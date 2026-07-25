@@ -4,7 +4,14 @@ import {
   reconstructPixelArt,
   countDistinctColors,
   extractPalette,
-  type PixelArtOptions,
+  buildOptions,
+  GRID_PRESETS,
+  PALETTE_PRESETS,
+  CLEAN_SPRITE_PRESET,
+  HIGH_DETAIL_PRESET,
+  type GridChoice,
+  type PaletteChoice,
+  type CleanupSettings,
   type SamplingMode,
   type RGBAImage,
   type GridDetectionResult,
@@ -29,28 +36,6 @@ interface ImportAiArtDialogProps {
   onClose: () => void;
   onConfirm: (result: AiArtImportResult) => void;
 }
-
-type GridChoice = 'auto' | '16' | '32' | '48' | '64' | '128' | 'custom';
-type PaletteChoice = 'auto' | '8' | '16' | '32' | '64' | 'original';
-
-const GRID_PRESETS: { value: GridChoice; label: string }[] = [
-  { value: 'auto', label: 'Auto' },
-  { value: '16', label: '16 × 16' },
-  { value: '32', label: '32 × 32' },
-  { value: '48', label: '48 × 48' },
-  { value: '64', label: '64 × 64' },
-  { value: '128', label: '128 × 128' },
-  { value: 'custom', label: 'Custom…' },
-];
-
-const PALETTE_PRESETS: { value: PaletteChoice; label: string }[] = [
-  { value: 'auto', label: 'Auto' },
-  { value: '8', label: '8' },
-  { value: '16', label: '16' },
-  { value: '32', label: '32' },
-  { value: '64', label: '64' },
-  { value: 'original', label: 'Original' },
-];
 
 const PREVIEW_BOX = 240; // px, both preview panes are square
 
@@ -142,36 +127,17 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
 
   // One-click presets. "Clean sprite" = flat pixel art; "High detail" = a
   // faithful downscale that keeps gradients and shading.
-  const applyCleanPreset = () => {
-    setSamplingMode('mode'); setPaletteChoice('auto');
-    setRemoveIsolatedPixels(true); setMergeSimilarColors(true); setRemoveAntiAliasing(true);
-  };
-  const applyHighDetailPreset = () => {
-    setSamplingMode('average'); setPaletteChoice('original');
-    setRemoveIsolatedPixels(false); setMergeSimilarColors(false); setRemoveAntiAliasing(false);
+  const applyPreset = (p: CleanupSettings) => {
+    setSamplingMode(p.samplingMode); setPaletteChoice(p.paletteChoice);
+    setRemoveIsolatedPixels(p.removeIsolatedPixels);
+    setMergeSimilarColors(p.mergeSimilarColors);
+    setRemoveAntiAliasing(p.removeAntiAliasing);
   };
 
-  const options = React.useMemo<PixelArtOptions>(() => {
-    let targetWidth: number | undefined;
-    let targetHeight: number | undefined;
-    let autoDetectGrid = true;
-    if (gridChoice === 'custom') {
-      autoDetectGrid = false; targetWidth = customW; targetHeight = customH;
-    } else if (gridChoice !== 'auto') {
-      autoDetectGrid = false;
-      const n = parseInt(gridChoice, 10);
-      targetWidth = n; targetHeight = n;
-    }
-
-    let paletteSize: number | undefined;
-    if (paletteChoice === 'original') paletteSize = 100000; // effectively no quantization
-    else if (paletteChoice !== 'auto') paletteSize = parseInt(paletteChoice, 10);
-
-    return {
-      autoDetectGrid, targetWidth, targetHeight, samplingMode, paletteSize,
-      mergeSimilarColors, removeAntiAliasing, removeIsolatedPixels, transparentBackground,
-    };
-  }, [gridChoice, customW, customH, samplingMode, paletteChoice, mergeSimilarColors, removeAntiAliasing, removeIsolatedPixels, transparentBackground]);
+  const options = React.useMemo(() => buildOptions({
+    gridChoice, customWidth: customW, customHeight: customH, samplingMode, paletteChoice,
+    mergeSimilarColors, removeAntiAliasing, removeIsolatedPixels, transparentBackground,
+  }), [gridChoice, customW, customH, samplingMode, paletteChoice, mergeSimilarColors, removeAntiAliasing, removeIsolatedPixels, transparentBackground]);
 
   // Recompute the reconstruction whenever the source or options change.
   const reconstruction = React.useMemo(() => {
@@ -252,8 +218,8 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
               <div style={{ width: 200, flex: 'none' }}>
                 <div style={s.label}>Preset</div>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-                  <button style={s.preset} onClick={applyCleanPreset}>Clean sprite</button>
-                  <button style={s.preset} onClick={applyHighDetailPreset}>High detail</button>
+                  <button style={s.preset} onClick={() => applyPreset(CLEAN_SPRITE_PRESET)}>Clean sprite</button>
+                  <button style={s.preset} onClick={() => applyPreset(HIGH_DETAIL_PRESET)}>High detail</button>
                 </div>
 
                 <div style={s.label}>Grid size</div>

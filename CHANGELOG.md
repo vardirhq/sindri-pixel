@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added a **standalone AI Pixel-Art Downscaler web app** (`web/`), published as a static GitHub Pages site at <https://pixel.vardir.no>. It runs the same reconstruction pipeline as the editor's Import AI Art dialog — grid detection, per-cell sampling, palette quantization, cleanup — with drag-drop, clipboard paste, side-by-side previews, a palette readout, and PNG export at 1×–16× nearest-neighbor scale. The layout fills the viewport like an application: a thin masthead, a controls sidebar, preview canvases that take all remaining height and repaint at an integer zoom whenever the window resizes, and a status bar that carries the export controls and a single line pointing at the desktop editor. Nothing is uploaded: the image is decoded and processed entirely in the browser tab, and the build contains no Tauri code. Built with `pnpm build:web` and deployed by the `Pages` workflow on pushes to `main`.
+
 ## 0.1.0-beta.2
 
 ### Changed

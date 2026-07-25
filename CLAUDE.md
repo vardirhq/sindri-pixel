@@ -28,8 +28,10 @@ Frontend:
 - `pnpm dev` — Vite dev server on port 1420 (strict port).
 - `pnpm test` — Vitest (unit tests).
 - `pnpm build` — `tsc && vite build`.
-- `pnpm check` — `pnpm test && pnpm build`. **This is the CI quality gate for
-  the frontend; run it before pushing.**
+- `pnpm dev:web` / `pnpm build:web` — the standalone downscaler (see below),
+  port 1421, output `dist-web/`.
+- `pnpm check` — tests + both bundles. **This is the CI quality gate for the
+  frontend; run it before pushing.**
 
 Desktop / Rust (all Cargo commands target `src-tauri/Cargo.toml`):
 
@@ -55,6 +57,25 @@ Frontend (`src/`):
   detection). Has tests + fixtures.
 - `lib/platform.ts` — Tauri detection and web fallbacks (download/file-pick).
 - `lib/storage.ts` — persistence helpers.
+
+Standalone web app (`web/`):
+
+- A second Vite entry point (`vite.config.web.ts`, root `web/`) that ships
+  **only** `lib/pixelReconstruction` + the design tokens as a static GitHub
+  Pages site: <https://pixel.vardir.no>. No editor, no Tauri — don't import
+  anything Tauri-gated into it.
+- The layout is viewport-filling (masthead / sidebar + canvases / status bar),
+  not a scrolling page: `body` is `overflow: hidden` above 820px wide, and the
+  preview canvases are sized by a `ResizeObserver` rather than fixed pixels.
+- `base` is `/` for the custom domain; `web/public/CNAME` carries the domain
+  into every deploy so re-deploying can't reset the Pages setting. Override
+  with `VITE_WEB_BASE=/sindri-pixel/` to serve from the project-Pages subpath.
+- Deployed by `.github/workflows/pages.yml` on pushes to `main`. Needs
+  Settings → Pages → Source = "GitHub Actions" plus the custom-domain and DNS
+  setup listed in that workflow's header comment.
+- `pixelReconstruction/uiOptions.ts` holds the choice types, presets, and
+  choice → `PixelArtOptions` mapping shared with `ImportAiArtDialog`. Change
+  knobs there, not in one front-end.
 
 Backend (`src-tauri/src/`):
 

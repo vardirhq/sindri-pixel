@@ -1,0 +1,63 @@
+name: Pages
+
+# Deploys the standalone AI Pixel-Art Downscaler (`web/`) to GitHub Pages at
+# https://pixel.vardir.no. The desktop CI workflow already builds `web/` as
+# part of `pnpm check`, so this one only runs on `main` and manual dispatch.
+#
+# One-time setup, none of which a workflow can do for itself:
+#   1. Settings → Pages → Source = "GitHub Actions".
+#   2. A DNS CNAME record: pixel.vardir.no → vardirhq.github.io.
+#   3. Settings → Pages → Custom domain = pixel.vardir.no, then enable
+#      "Enforce HTTPS" once the certificate is issued.
+# The domain is also committed as `web/public/CNAME` so each deploy preserves
+# it rather than resetting the Pages setting.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build downscaler
+        run: pnpm build:web
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
