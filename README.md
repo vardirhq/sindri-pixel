@@ -100,12 +100,23 @@ pnpm dev          # Vite dev server on http://localhost:1420
 
 The editor detects when Tauri is absent and falls back to browser-native file pickers and canvas-based PNG encoding. Some capabilities (e.g. animated GIF export) are desktop-only.
 
+### Run the standalone downscaler
+
+```bash
+pnpm dev:web      # Vite dev server on http://localhost:1421
+```
+
+The **AI Pixel-Art Downscaler** is a second, self-contained entry point (`web/`) that ships only the reconstruction pipeline — no editor, no Tauri. It is published as a static site at **<https://vardirhq.github.io/sindri-pixel/>**.
+
 ### Build for production
 
 ```bash
 pnpm build        # type-check + bundle the frontend
+pnpm build:web    # type-check + bundle the standalone downscaler → dist-web/
 pnpm tauri build  # produce a native installer/binary
 ```
+
+`pnpm check` (the CI quality gate) runs the unit tests and both bundles.
 
 ---
 
@@ -174,6 +185,10 @@ sindri-pixel/
 │   │   └── storage.ts        # recents, templates & autosave (localStorage)
 │   └── styles/tokens.css     # the Sindri design system (color + type)
 │
+├── web/                      # standalone AI Pixel-Art Downscaler (GitHub Pages)
+│   ├── DownscaleApp.tsx      # the whole single-page tool
+│   └── main.tsx              # entry point — pipeline + tokens only, no Tauri
+│
 └── src-tauri/                # Rust backend (Tauri 2)
     ├── src/commands.rs       # read/write .spr, export_png, export_gif, import_png
     └── src/lib.rs            # command registration & app bootstrap
@@ -189,6 +204,8 @@ sindri-pixel/
 | `import_png` | Decode any PNG (RGBA/RGB/grayscale/indexed) into a normalized pixel buffer. |
 
 When Tauri isn't available, `src/lib/platform.ts` transparently substitutes canvas-based encoders and browser file pickers so the same UI keeps working on the web.
+
+**Two frontends, one pipeline.** `src/lib/pixelReconstruction/` is pure TypeScript with no DOM or Tauri dependencies, so it powers both the desktop editor's *Import AI Art* dialog and the standalone web downscaler. The shared knob vocabulary (grid/palette choices, the *Clean sprite* and *High detail* presets, and the mapping from those choices to pipeline options) lives in `pixelReconstruction/uiOptions.ts` so the two front-ends can't drift apart.
 
 Project writes use a temporary file and atomic replacement so an interrupted save does not truncate the existing project. The Rust export boundary validates dimensions, scaling, frame counts, and pixel-buffer lengths before allocating or encoding output.
 

@@ -1,0 +1,376 @@
+/*
+ * Standalone downscaler page chrome.
+ * Colors and type come from the shared Sindri tokens; everything here is
+ * layout for a single-column marketing-ish page wrapped around the tool.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--ink-2);
+}
+
+.page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 24px 72px;
+}
+
+/* ─── header ─────────────────────────────────────────────── */
+
+.masthead {
+  border-bottom: 1px solid var(--rule);
+  padding: 28px 0 22px;
+  margin-bottom: 32px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.masthead h1 {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  letter-spacing: 0.01em;
+}
+
+.masthead .tagline {
+  color: var(--ink-3);
+  font-size: 13px;
+  margin: 0;
+  max-width: 60ch;
+}
+
+.masthead .eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin: 0 0 8px;
+}
+
+.masthead-links {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+/* ─── generic controls ───────────────────────────────────── */
+
+.btn {
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  padding: 7px 16px;
+  background: transparent;
+  border: 1px solid var(--rule-2);
+  color: var(--ink-2);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.btn:hover {
+  border-color: var(--ink-4);
+  color: var(--ink);
+}
+
+.btn-primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.btn-primary:hover {
+  background: var(--ink-2);
+  border-color: var(--ink-2);
+  color: var(--paper);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+}
+
+select,
+input[type='number'] {
+  background: var(--paper);
+  border: 1px solid var(--rule-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--ink-2);
+}
+
+.seg {
+  display: flex;
+}
+
+.seg > div {
+  flex: 1;
+  text-align: center;
+  padding: 6px 4px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  background: var(--paper);
+  color: var(--ink-3);
+  border: 1px solid var(--rule-2);
+  border-left: none;
+}
+
+.seg > div:first-child {
+  border-left: 1px solid var(--rule-2);
+}
+
+.seg > div.active {
+  background: var(--paper-3);
+  color: var(--ink);
+}
+
+.preset-row {
+  display: flex;
+  gap: 8px;
+}
+
+.preset-row button {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--rule-2);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.preset-row button:hover {
+  border-color: var(--ink-4);
+  color: var(--ink);
+}
+
+/* ─── drop zone ──────────────────────────────────────────── */
+
+.drop {
+  border: 1px dashed var(--rule-2);
+  background: var(--paper-2);
+  padding: 44px 16px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+.drop.active {
+  border-color: var(--amber);
+  background: var(--paper-3);
+  color: var(--ink-2);
+}
+
+.drop .hint {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-top: 8px;
+}
+
+.error {
+  color: var(--red);
+  font-size: 12.5px;
+  margin-top: 12px;
+}
+
+/* ─── workspace ──────────────────────────────────────────── */
+
+.workspace {
+  display: flex;
+  gap: 28px;
+  margin-top: 28px;
+  align-items: flex-start;
+}
+
+.controls {
+  width: 210px;
+  flex: none;
+}
+
+.controls > .label:not(:first-child) {
+  margin-top: 18px;
+}
+
+.previews {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.pane .frame {
+  background: var(--paper-2);
+  border: 1px solid var(--rule-2);
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* checkerboard so transparency is legible */
+  background-image:
+    linear-gradient(45deg, var(--paper-3) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--paper-3) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--paper-3) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--paper-3) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+.pane canvas {
+  image-rendering: pixelated;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.stats {
+  margin-top: 24px;
+  border-top: 1px solid var(--rule);
+  padding-top: 12px;
+}
+
+.stat {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 3px 0;
+  color: var(--ink-2);
+}
+
+.stat .k {
+  color: var(--ink-4);
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 10px;
+}
+
+.swatch {
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--rule-2);
+}
+
+.export-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  border-top: 1px solid var(--rule);
+  padding-top: 20px;
+}
+
+.export-bar .spacer {
+  flex: 1;
+}
+
+.export-bar label {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.export-bar select {
+  width: auto;
+}
+
+/* ─── prose sections ─────────────────────────────────────── */
+
+.prose {
+  margin-top: 64px;
+  border-top: 1px solid var(--rule);
+  padding-top: 32px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 32px;
+}
+
+.prose h2 {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.prose p {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.footer {
+  margin-top: 48px;
+  border-top: 1px solid var(--rule);
+  padding-top: 20px;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+/* ─── narrow screens ─────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  .workspace {
+    flex-direction: column;
+  }
+
+  .controls {
+    width: 100%;
+  }
+
+  .prose {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+}

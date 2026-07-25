@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added a **standalone AI Pixel-Art Downscaler web app** (`web/`), published as a static GitHub Pages site at <https://vardirhq.github.io/sindri-pixel/>. It runs the same reconstruction pipeline as the editor's Import AI Art dialog — grid detection, per-cell sampling, palette quantization, cleanup — as a single page with drag-drop, clipboard paste, side-by-side previews, a palette readout, and PNG export at 1×–16× nearest-neighbor scale. Nothing is uploaded: the image is decoded and processed entirely in the browser tab, and the build contains no Tauri code. Built with `pnpm build:web` and deployed by the `Pages` workflow on pushes to `main`.
+
 ## 0.1.0-beta.2
 
 ### Changed
