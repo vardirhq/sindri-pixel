@@ -62,12 +62,17 @@ Standalone web app (`web/`):
 
 - A second Vite entry point (`vite.config.web.ts`, root `web/`) that ships
   **only** `lib/pixelReconstruction` + the design tokens as a static GitHub
-  Pages site: <https://vardirhq.github.io/sindri-pixel/>. No editor, no Tauri —
-  don't import anything Tauri-gated into it.
-- `base` is `/sindri-pixel/` (project Pages live under the repo name). Override
-  with `VITE_WEB_BASE=/` for a custom domain or a user/org Pages repo.
+  Pages site: <https://pixel.vardir.no>. No editor, no Tauri — don't import
+  anything Tauri-gated into it.
+- The layout is viewport-filling (masthead / sidebar + canvases / status bar),
+  not a scrolling page: `body` is `overflow: hidden` above 820px wide, and the
+  preview canvases are sized by a `ResizeObserver` rather than fixed pixels.
+- `base` is `/` for the custom domain; `web/public/CNAME` carries the domain
+  into every deploy so re-deploying can't reset the Pages setting. Override
+  with `VITE_WEB_BASE=/sindri-pixel/` to serve from the project-Pages subpath.
 - Deployed by `.github/workflows/pages.yml` on pushes to `main`. Needs
-  Settings → Pages → Source = "GitHub Actions" set once by hand.
+  Settings → Pages → Source = "GitHub Actions" plus the custom-domain and DNS
+  setup listed in that workflow's header comment.
 - `pixelReconstruction/uiOptions.ts` holds the choice types, presets, and
   choice → `PixelArtOptions` mapping shared with `ImportAiArtDialog`. Change
   knobs there, not in one front-end.

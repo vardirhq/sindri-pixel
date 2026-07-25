@@ -1,15 +1,22 @@
 /*
- * Standalone downscaler page chrome.
- * Colors and type come from the shared Sindri tokens; everything here is
- * layout for a single-column marketing-ish page wrapped around the tool.
+ * Standalone downscaler — app chrome.
+ * Colors and type come from the shared Sindri tokens. The tool fills the
+ * viewport like an application rather than scrolling like a page: a thin
+ * masthead, a work area that takes all remaining height, and a status bar.
  */
 
 * {
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
+  overflow: hidden;
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-sans);
@@ -18,56 +25,68 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+#root {
+  height: 100%;
+}
+
 a {
   color: var(--ink-2);
 }
 
-.page {
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: 0 24px 72px;
+.app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
 }
 
-/* ─── header ─────────────────────────────────────────────── */
+/* ─── masthead ───────────────────────────────────────────── */
 
 .masthead {
+  flex: none;
   border-bottom: 1px solid var(--rule);
-  padding: 28px 0 22px;
-  margin-bottom: 32px;
+  padding: 12px 20px;
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
+  align-items: center;
   gap: 16px;
 }
 
 .masthead h1 {
   font-family: var(--font-display);
-  font-size: 26px;
+  font-size: 16px;
   font-weight: 600;
-  margin: 0 0 6px;
-  letter-spacing: 0.01em;
-}
-
-.masthead .tagline {
-  color: var(--ink-3);
-  font-size: 13px;
   margin: 0;
-  max-width: 60ch;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
 .masthead .eyebrow {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--amber);
-  margin: 0 0 8px;
+  margin: 0;
+  white-space: nowrap;
 }
 
-.masthead-links {
-  display: flex;
-  gap: 8px;
+.masthead .tagline {
+  color: var(--ink-4);
+  font-size: 12px;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.masthead .spacer {
+  flex: 1;
+}
+
+.masthead .divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--rule-2);
   flex: none;
 }
 
@@ -75,13 +94,14 @@ a {
 
 .btn {
   font-family: var(--font-display);
-  font-size: 12.5px;
-  padding: 7px 16px;
+  font-size: 12px;
+  padding: 6px 14px;
   background: transparent;
   border: 1px solid var(--rule-2);
   color: var(--ink-2);
   cursor: pointer;
   text-decoration: none;
+  white-space: nowrap;
   display: inline-block;
 }
 
@@ -109,11 +129,11 @@ a {
 
 .label {
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--ink-3);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  margin-bottom: 8px;
+  margin-bottom: 7px;
 }
 
 select,
@@ -122,8 +142,8 @@ input[type='number'] {
   border: 1px solid var(--rule-2);
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  padding: 6px 8px;
+  font-size: 12px;
+  padding: 5px 7px;
   width: 100%;
 }
 
@@ -131,9 +151,9 @@ input[type='number'] {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: 12px;
   cursor: pointer;
-  padding: 4px 0;
+  padding: 3px 0;
   color: var(--ink-2);
 }
 
@@ -144,10 +164,10 @@ input[type='number'] {
 .seg > div {
   flex: 1;
   text-align: center;
-  padding: 6px 4px;
+  padding: 5px 4px;
   cursor: pointer;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 11px;
   background: var(--paper);
   color: var(--ink-3);
   border: 1px solid var(--rule-2);
@@ -165,13 +185,14 @@ input[type='number'] {
 
 .preset-row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .preset-row button {
+  flex: 1;
   font-family: var(--font-mono);
-  font-size: 11px;
-  padding: 5px 10px;
+  font-size: 10.5px;
+  padding: 5px 4px;
   background: transparent;
   border: 1px solid var(--rule-2);
   color: var(--ink-2);
@@ -183,68 +204,146 @@ input[type='number'] {
   color: var(--ink);
 }
 
-/* ─── drop zone ──────────────────────────────────────────── */
+/* ─── work area ──────────────────────────────────────────── */
 
-.drop {
+.work {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* empty state: the whole work area is the drop target */
+
+.dropzone {
+  flex: 1;
+  margin: 20px;
   border: 1px dashed var(--rule-2);
   background: var(--paper-2);
-  padding: 44px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   text-align: center;
   cursor: pointer;
   color: var(--ink-3);
-  font-size: 13px;
+  padding: 24px;
 }
 
-.drop.active {
+.dropzone.active {
   border-color: var(--amber);
   background: var(--paper-3);
   color: var(--ink-2);
 }
 
-.drop .hint {
-  display: block;
+.dropzone .big {
+  font-family: var(--font-display);
+  font-size: 18px;
+  color: var(--ink-2);
+}
+
+.dropzone .hint {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--ink-4);
-  margin-top: 8px;
+  max-width: 52ch;
 }
 
-.error {
+.dropzone .error {
   color: var(--red);
-  font-size: 12.5px;
-  margin-top: 12px;
+  font-size: 12px;
 }
 
-/* ─── workspace ──────────────────────────────────────────── */
+/* loaded state: sidebar + canvases */
 
-.workspace {
-  display: flex;
-  gap: 28px;
-  margin-top: 28px;
-  align-items: flex-start;
-}
-
-.controls {
-  width: 210px;
+.sidebar {
+  width: 216px;
   flex: none;
+  border-right: 1px solid var(--rule);
+  padding: 16px;
+  overflow-y: auto;
 }
 
-.controls > .label:not(:first-child) {
-  margin-top: 18px;
+.sidebar > .label:not(:first-child) {
+  margin-top: 16px;
 }
 
-.previews {
+.canvases {
   flex: 1;
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px;
+  gap: 12px;
+}
+
+.filebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.filebar .name {
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filebar .replace {
+  color: var(--ink-4);
+  background: none;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.filebar .replace:hover {
+  color: var(--ink-2);
+}
+
+.panes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
   gap: 16px;
 }
 
-.pane .frame {
+.pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane .caption {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.pane .caption .dims {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+
+.frame {
+  flex: 1;
+  min-height: 0;
   background: var(--paper-2);
   border: 1px solid var(--rule-2);
-  aspect-ratio: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -259,14 +358,18 @@ input[type='number'] {
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
 
-.pane canvas {
-  image-rendering: pixelated;
-  max-width: 100%;
-  max-height: 100%;
+.frame canvas {
+  display: block;
 }
 
+.frame canvas.crisp {
+  image-rendering: pixelated;
+}
+
+/* ─── sidebar stats ──────────────────────────────────────── */
+
 .stats {
-  margin-top: 24px;
+  margin-top: 18px;
   border-top: 1px solid var(--rule);
   padding-top: 12px;
 }
@@ -274,9 +377,10 @@ input[type='number'] {
 .stat {
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   font-family: var(--font-mono);
-  font-size: 11.5px;
-  padding: 3px 0;
+  font-size: 11px;
+  padding: 2px 0;
   color: var(--ink-2);
 }
 
@@ -292,85 +396,97 @@ input[type='number'] {
 }
 
 .swatch {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border: 1px solid var(--rule-2);
 }
 
-.export-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-top: 24px;
+/* ─── status bar ─────────────────────────────────────────── */
+
+.statusbar {
+  flex: none;
   border-top: 1px solid var(--rule);
-  padding-top: 20px;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
 }
 
-.export-bar .spacer {
+.statusbar .spacer {
   flex: 1;
 }
 
-.export-bar label {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--ink-3);
-}
-
-.export-bar select {
+.statusbar select {
   width: auto;
 }
 
-/* ─── prose sections ─────────────────────────────────────── */
-
-.prose {
-  margin-top: 64px;
-  border-top: 1px solid var(--rule);
-  padding-top: 32px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 32px;
-}
-
-.prose h2 {
-  font-family: var(--font-display);
-  font-size: 14px;
-  font-weight: 600;
-  margin: 0 0 8px;
-}
-
-.prose p {
-  margin: 0;
-  color: var(--ink-3);
-  font-size: 12.5px;
-}
-
-.footer {
-  margin-top: 48px;
-  border-top: 1px solid var(--rule);
-  padding-top: 20px;
+.statusbar .plug {
   color: var(--ink-4);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  justify-content: space-between;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* ─── narrow screens ─────────────────────────────────────── */
+.statusbar .plug a {
+  color: var(--ink-3);
+  text-decoration: none;
+  border-bottom: 1px solid var(--rule-2);
+}
 
-@media (max-width: 760px) {
-  .workspace {
+.statusbar .plug a:hover {
+  color: var(--amber);
+  border-bottom-color: var(--amber-dim);
+}
+
+/* ─── narrow screens: fall back to a normal scrolling page ─ */
+
+@media (max-width: 820px) {
+  body {
+    overflow: auto;
+  }
+
+  .app {
+    height: auto;
+    min-height: 100dvh;
+  }
+
+  .masthead {
+    flex-wrap: wrap;
+  }
+
+  .masthead .tagline,
+  .masthead .divider {
+    display: none;
+  }
+
+  .work {
     flex-direction: column;
   }
 
-  .controls {
+  .sidebar {
     width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+    overflow: visible;
   }
 
-  .prose {
-    grid-template-columns: 1fr;
-    gap: 24px;
+  .panes {
+    flex-direction: column;
+  }
+
+  .frame {
+    aspect-ratio: 1;
+  }
+
+  .dropzone {
+    min-height: 60vh;
+  }
+
+  .statusbar {
+    flex-wrap: wrap;
   }
 }

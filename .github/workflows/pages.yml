@@ -1,12 +1,16 @@
 name: Pages
 
 # Deploys the standalone AI Pixel-Art Downscaler (`web/`) to GitHub Pages at
-# https://vardirhq.github.io/sindri-pixel/. The desktop CI workflow already
-# builds `web/` as part of `pnpm check`, so this one only runs on `main` and
-# manual dispatch.
+# https://pixel.vardir.no. The desktop CI workflow already builds `web/` as
+# part of `pnpm check`, so this one only runs on `main` and manual dispatch.
 #
-# One-time setup: Settings → Pages → Source = "GitHub Actions". A workflow
-# cannot enable that itself.
+# One-time setup, none of which a workflow can do for itself:
+#   1. Settings → Pages → Source = "GitHub Actions".
+#   2. A DNS CNAME record: pixel.vardir.no → vardirhq.github.io.
+#   3. Settings → Pages → Custom domain = pixel.vardir.no, then enable
+#      "Enforce HTTPS" once the certificate is issued.
+# The domain is also committed as `web/public/CNAME` so each deploy preserves
+# it rather than resetting the Pages setting.
 
 on:
   push:

@@ -106,7 +106,7 @@ The editor detects when Tauri is absent and falls back to browser-native file pi
 pnpm dev:web      # Vite dev server on http://localhost:1421
 ```
 
-The **AI Pixel-Art Downscaler** is a second, self-contained entry point (`web/`) that ships only the reconstruction pipeline — no editor, no Tauri. It is published as a static site at **<https://vardirhq.github.io/sindri-pixel/>**.
+The **AI Pixel-Art Downscaler** is a second, self-contained entry point (`web/`) that ships only the reconstruction pipeline — no editor, no Tauri. It fills the viewport like an application rather than scrolling like a page, and is published as a static site at **<https://pixel.vardir.no>**.
 
 ### Build for production
 

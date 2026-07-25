@@ -6,12 +6,13 @@ import react from '@vitejs/plugin-react';
 // `vite.config.ts` — this one only pulls in `src/lib/pixelReconstruction` and
 // the shared design tokens.
 //
-// Project Pages are served from a subpath (`/sindri-pixel/`), so `base` must
-// match the repo name. Set VITE_WEB_BASE=/ when serving from a custom domain
-// or a user/org Pages repo.
+// The site is served from the custom domain pixel.vardir.no (see
+// `web/public/CNAME`), so assets live at the root. Set
+// VITE_WEB_BASE=/sindri-pixel/ to serve it from the default project-Pages
+// subpath instead.
 export default defineConfig({
   root: 'web',
-  base: process.env.VITE_WEB_BASE ?? '/sindri-pixel/',
+  base: process.env.VITE_WEB_BASE ?? '/',
   plugins: [react()],
   clearScreen: false,
   server: {

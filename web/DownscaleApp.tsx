@@ -1,9 +1,9 @@
 // Standalone AI pixel-art downscaler.
 //
-// Same pipeline as the editor's "Import AI Art" dialog, presented as a full
-// page instead of a modal: drop an AI-generated raster, tune the grid /
-// palette / cleanup knobs, download a true low-resolution PNG. Everything
-// runs client-side — the image never leaves the browser.
+// Same pipeline as the editor's "Import AI Art" dialog, presented as a
+// viewport-filling tool: masthead, controls sidebar, two preview canvases that
+// take all remaining height, and a status bar. Everything runs client-side —
+// the image never leaves the browser.
 
 import React from 'react';
 import { loadImageData, encodePngInBrowser, downloadBytes } from '../src/lib/platform';
@@ -34,19 +34,39 @@ function confidenceColor(c: GridDetectionResult['confidence']): string {
   return c === 'high' ? 'var(--moss)' : c === 'medium' ? 'var(--amber)' : 'var(--red)';
 }
 
-/** Paint an RGBAImage into a canvas at an integer zoom that fits `box` px. */
-function paintPreview(canvas: HTMLCanvasElement | null, image: RGBAImage | null, box: number): void {
-  if (!canvas) return;
+/**
+ * Paint an RGBAImage to fill `box` as closely as possible.
+ *
+ * Reconstructed sprites are drawn at an integer zoom with nearest-neighbor so
+ * pixels stay square and crisp; source rasters (usually far larger than the
+ * pane) are drawn at a fractional scale with smoothing, which is the honest
+ * preview of what the input actually looks like.
+ */
+function paintFitted(
+  canvas: HTMLCanvasElement | null,
+  image: RGBAImage | null,
+  box: { w: number; h: number },
+  crisp: boolean,
+): void {
+  if (!canvas || !image || image.width === 0 || image.height === 0) return;
+  if (box.w < 1 || box.h < 1) return;
+
+  const fit = Math.min(box.w / image.width, box.h / image.height);
+  const scale = crisp && fit >= 1 ? Math.floor(fit) : fit;
+  const cssW = Math.max(1, Math.floor(image.width * scale));
+  const cssH = Math.max(1, Math.floor(image.height * scale));
+
+  // Render at device resolution so the nearest-neighbor grid stays sharp on
+  // HiDPI displays, then let CSS lay it out in logical pixels.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (!image || image.width === 0 || image.height === 0) return;
-
-  const scale = Math.max(1, Math.min(box / image.width, box / image.height));
-  const drawW = Math.round(image.width * scale);
-  const drawH = Math.round(image.height * scale);
-  canvas.width = drawW;
-  canvas.height = drawH;
 
   const scratch = document.createElement('canvas');
   scratch.width = image.width;
@@ -54,8 +74,38 @@ function paintPreview(canvas: HTMLCanvasElement | null, image: RGBAImage | null,
   const sctx = scratch.getContext('2d');
   if (!sctx) return;
   sctx.putImageData(new ImageData(new Uint8ClampedArray(image.data), image.width, image.height), 0, 0);
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(scratch, 0, 0, drawW, drawH);
+
+  ctx.imageSmoothingEnabled = !crisp;
+  ctx.drawImage(scratch, 0, 0, canvas.width, canvas.height);
+}
+
+/**
+ * Repaint `image` into a canvas whenever it or the containing box changes.
+ *
+ * The frame and canvas are tracked as state via callback refs, not plain refs:
+ * they only mount once an image is loaded, so an effect keyed on mount alone
+ * would attach the observer to a null element and never paint anything.
+ */
+function useFittedCanvas(image: RGBAImage | null, crisp: boolean) {
+  const [frameEl, setFrameEl] = React.useState<HTMLDivElement | null>(null);
+  const [canvasEl, setCanvasEl] = React.useState<HTMLCanvasElement | null>(null);
+  const [box, setBox] = React.useState({ w: 0, h: 0 });
+
+  React.useEffect(() => {
+    if (!frameEl) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setBox({ w: Math.floor(width), h: Math.floor(height) });
+    });
+    ro.observe(frameEl);
+    return () => ro.disconnect();
+  }, [frameEl]);
+
+  React.useEffect(() => {
+    paintFitted(canvasEl, image, box, crisp);
+  }, [canvasEl, image, box, crisp]);
+
+  return { frameRef: setFrameEl, canvasRef: setCanvasEl };
 }
 
 export function DownscaleApp() {
@@ -75,9 +125,6 @@ export function DownscaleApp() {
   const [removeAntiAliasing, setRemoveAntiAliasing] = React.useState(true);
   const [transparentBackground, setTransparentBackground] = React.useState(true);
   const [exportScale, setExportScale] = React.useState(1);
-
-  const origCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
-  const resultCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
 
   const applyPreset = (p: CleanupSettings) => {
     setSamplingMode(p.samplingMode);
@@ -104,8 +151,8 @@ export function DownscaleApp() {
     }
   }, [source, options]);
 
-  React.useEffect(() => { paintPreview(origCanvasRef.current, source, 512); }, [source]);
-  React.useEffect(() => { paintPreview(resultCanvasRef.current, reconstruction?.result ?? null, 512); }, [reconstruction]);
+  const original = useFittedCanvas(source, false);
+  const output = useFittedCanvas(reconstruction?.result ?? null, true);
 
   const handleFile = React.useCallback(async (file: File) => {
     setError(null);
@@ -121,13 +168,13 @@ export function DownscaleApp() {
     }
   }, []);
 
-  const pickFile = () => {
+  const pickFile = React.useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/png,image/jpeg,image/webp,image/*';
     input.onchange = () => { const f = input.files?.[0]; if (f) void handleFile(f); };
     input.click();
-  };
+  }, [handleFile]);
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -148,6 +195,27 @@ export function DownscaleApp() {
     return () => window.removeEventListener('paste', onPaste);
   }, [handleFile]);
 
+  // Dropping anywhere in the window works once an image is loaded, so the
+  // small "replace" affordance isn't the only target.
+  React.useEffect(() => {
+    const over = (e: DragEvent) => { e.preventDefault(); setDragging(true); };
+    const leave = (e: DragEvent) => { if (!e.relatedTarget) setDragging(false); };
+    const drop = (e: DragEvent) => {
+      e.preventDefault();
+      setDragging(false);
+      const f = e.dataTransfer?.files?.[0];
+      if (f) void handleFile(f);
+    };
+    window.addEventListener('dragover', over);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('drop', drop);
+    };
+  }, [handleFile]);
+
   const downloadPng = async () => {
     if (!reconstruction) return;
     const img = reconstruction.result;
@@ -162,46 +230,46 @@ export function DownscaleApp() {
   };
 
   const det = reconstruction?.detection;
+  const out = reconstruction?.result;
 
   return (
-    <div className="page">
+    <div className="app">
       <header className="masthead">
         <div>
           <p className="eyebrow">Sindri Pixel</p>
           <h1>AI Pixel-Art Downscaler</h1>
-          <p className="tagline">
-            AI image models produce pixel art that only <em>looks</em> pixelated — a big raster with a
-            wobbly implied grid and thousands of colors. This finds the grid, resamples to the real
-            resolution, and cleans up the palette.
-          </p>
         </div>
-        <div className="masthead-links">
-          <a className="btn" href={REPO_URL} target="_blank" rel="noreferrer">Source</a>
-          <a className="btn" href={RELEASES_URL} target="_blank" rel="noreferrer">Desktop app</a>
-        </div>
+        <div className="divider" />
+        <p className="tagline">
+          Finds the implied grid in an AI-generated raster and resamples it to its real resolution.
+        </p>
+        <span className="spacer" />
+        <a className="btn" href={REPO_URL} target="_blank" rel="noreferrer">Source</a>
       </header>
 
-      <div
-        className={`drop${dragging ? ' active' : ''}`}
-        onClick={pickFile}
-        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-      >
-        {source
-          ? <span>{fileName || 'pasted image'} · {source.width} × {source.height}px — click, drop or paste to replace</span>
-          : <span>Drop an image here, click to choose a file, or paste from the clipboard</span>}
-        <span className="hint">
-          {busy ? 'reading image…' : 'PNG · JPEG · WebP — processed locally, never uploaded'}
-        </span>
-      </div>
-
-      {error && <div className="error">{error}</div>}
-
-      {source && (
-        <>
-          <div className="workspace">
-            <div className="controls">
+      <div className="work">
+        {!source ? (
+          <div
+            className={`dropzone${dragging ? ' active' : ''}`}
+            onClick={pickFile}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+          >
+            <span className="big">
+              {busy ? 'Reading image…' : 'Drop an AI-generated image here'}
+            </span>
+            <span className="hint">
+              or click to choose a file, or paste from the clipboard · PNG, JPEG, WebP
+            </span>
+            <span className="hint">
+              Processed entirely in this tab — nothing is uploaded.
+            </span>
+            {error && <span className="error">{error}</span>}
+          </div>
+        ) : (
+          <>
+            <aside className="sidebar">
               <div className="label">Preset</div>
               <div className="preset-row">
                 <button onClick={() => applyPreset(CLEAN_SPRITE_PRESET)}>Clean sprite</button>
@@ -260,91 +328,78 @@ export function DownscaleApp() {
                 <input type="checkbox" checked={transparentBackground} onChange={(e) => setTransparentBackground(e.target.checked)} />
                 Transparent background
               </label>
-            </div>
-
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="previews">
-                <div className="pane">
-                  <div className="label">Original</div>
-                  <div className="frame"><canvas ref={origCanvasRef} /></div>
-                </div>
-                <div className="pane">
-                  <div className="label">Reconstructed</div>
-                  <div className="frame"><canvas ref={resultCanvasRef} /></div>
-                </div>
-              </div>
 
               {det && (
                 <div className="stats">
-                  <div className="stat"><span className="k">Source resolution</span><span>{source.width} × {source.height}px</span></div>
-                  <div className="stat"><span className="k">Detected cell size</span><span>{Math.round(det.cellSize)}px</span></div>
+                  <div className="stat"><span className="k">Cell size</span><span>{Math.round(det.cellSize)}px</span></div>
                   <div className="stat"><span className="k">Output grid</span><span>{det.gridWidth} × {det.gridHeight}</span></div>
                   <div className="stat">
-                    <span className="k">Detection confidence</span>
+                    <span className="k">Confidence</span>
                     <span style={{ color: confidenceColor(det.confidence) }}>{det.confidence}</span>
                   </div>
                   <div className="stat"><span className="k">Colors</span><span>{reconstruction?.colorCount ?? 0}</span></div>
                   {reconstruction && reconstruction.palette.length > 0 && (
                     <div className="swatches">
-                      {reconstruction.palette.slice(0, 64).map((hex) => (
+                      {reconstruction.palette.slice(0, 48).map((hex) => (
                         <div key={hex} className="swatch" style={{ background: hex }} title={hex} />
                       ))}
                     </div>
                   )}
                 </div>
               )}
-            </div>
-          </div>
+            </aside>
 
-          <div className="export-bar">
-            <label htmlFor="scale">Export scale</label>
+            <main className="canvases">
+              <div className="filebar">
+                <span className="name">{fileName || 'pasted image'}</span>
+                <button className="replace" onClick={pickFile}>replace</button>
+                <span>{busy ? 'reading image…' : 'drop or paste to swap'}</span>
+                {error && <span style={{ color: 'var(--red)' }}>{error}</span>}
+              </div>
+
+              <div className="panes">
+                <div className="pane">
+                  <div className="caption">
+                    <span className="label" style={{ margin: 0 }}>Original</span>
+                    <span className="dims">{source.width} × {source.height}px</span>
+                  </div>
+                  <div className="frame" ref={original.frameRef}>
+                    <canvas ref={original.canvasRef} />
+                  </div>
+                </div>
+                <div className="pane">
+                  <div className="caption">
+                    <span className="label" style={{ margin: 0 }}>Reconstructed</span>
+                    <span className="dims">{out ? `${out.width} × ${out.height}px` : '—'}</span>
+                  </div>
+                  <div className="frame" ref={output.frameRef}>
+                    <canvas ref={output.canvasRef} className="crisp" />
+                  </div>
+                </div>
+              </div>
+            </main>
+          </>
+        )}
+      </div>
+
+      <footer className="statusbar">
+        <span className="plug">
+          Also built into <a href={RELEASES_URL} target="_blank" rel="noreferrer">Sindri Pixel</a>,
+          the desktop sprite editor — where the result lands on a canvas you can edit and animate.
+        </span>
+        <span className="spacer" />
+        {source && (
+          <>
+            <label htmlFor="scale">Export</label>
             <select id="scale" value={exportScale} onChange={(e) => setExportScale(parseInt(e.target.value, 10))}>
               {EXPORT_SCALES.map((n) => <option key={n} value={n}>{n}×</option>)}
             </select>
-            {reconstruction && (
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--ink-4)' }}>
-                {reconstruction.result.width * exportScale} × {reconstruction.result.height * exportScale}px
-              </span>
-            )}
-            <span className="spacer" />
+            {out && <span>{out.width * exportScale} × {out.height * exportScale}px</span>}
             <button className="btn btn-primary" onClick={() => void downloadPng()} disabled={!reconstruction}>
               Download PNG
             </button>
-          </div>
-        </>
-      )}
-
-      <section className="prose">
-        <div>
-          <h2>Grid detection</h2>
-          <p>
-            The implied cell size is found by scoring candidate grids on within-cell color variance —
-            the right grid is the one whose cells are internally flat. No model, no guessing at a
-            "nice" number; it is deterministic and reports its own confidence.
-          </p>
-        </div>
-        <div>
-          <h2>Honest downscaling</h2>
-          <p>
-            Each cell collapses to one pixel: center-weighted mode for flat, readable sprites, or an
-            alpha-weighted average when you want gradients and shading preserved. Anti-aliased
-            fringes, stray pixels and near-duplicate colors are cleaned up afterwards.
-          </p>
-        </div>
-        <div>
-          <h2>Local-first</h2>
-          <p>
-            Everything happens in this tab — no upload, no account, no server. The same pipeline
-            ships inside <a href={RELEASES_URL} target="_blank" rel="noreferrer">Sindri Pixel</a>, the
-            desktop sprite editor, where the result lands directly on a canvas you can edit and
-            animate.
-          </p>
-        </div>
-      </section>
-
-      <footer className="footer">
-        <span>Part of the Sindri 2D game engine · MIT</span>
-        <span><a href={REPO_URL} target="_blank" rel="noreferrer">github.com/vardirhq/sindri-pixel</a></span>
+          </>
+        )}
       </footer>
     </div>
   );
