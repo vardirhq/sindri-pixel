@@ -126,6 +126,29 @@ describe('sprite sheet splitting', () => {
     });
   });
 
+  it('keeps separate poses whole when another row is one long touching chain', () => {
+    // Row 1: five poses joined fist-to-fist into one wide blob, larger than
+    // four single poses. Row 2, just below: three poses standing apart. Next
+    // to the chain they look small, but they are poses, not fragments to glue
+    // onto the pose above.
+    const img = makeImage(5 * 54 + 20, 250);
+    const rnd = lcg(5);
+    const placed: Placed[] = [];
+    for (let c = 0; c < 5; c++) {
+      placed.push(drawPose(img, 4 + c * 54, 4, COLORS[c], rnd));
+      // A fist reaching across to the next pose.
+      if (c < 4) for (let y = 40; y < 46; y++) for (let x = 4 + c * 54 + 48; x < 4 + (c + 1) * 54 + 6; x++) put(img, x, y, COLORS[c]);
+    }
+    for (let c = 0; c < 3; c++) placed.push(drawPose(img, 20 + c * 90, 4 + 15 * PIX + 14, COLORS[c + 2], rnd));
+    const split = splitSheet(img);
+    expect(split.poses).toHaveLength(8);
+    split.poses.forEach((r, i) => {
+      const p = placed[i];
+      expect(Math.abs(r.x + r.w / 2 - (p.x + p.w / 2))).toBeLessThan(10);
+      expect(Math.abs(r.y + r.h / 2 - (p.y + p.h / 2))).toBeLessThan(12);
+    });
+  });
+
   it('leaves a single sprite (with a detached sword and a shadow) whole', () => {
     const img = makeImage(200, 200);
     const rnd = lcg(3);
