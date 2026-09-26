@@ -62,9 +62,11 @@ Frontend (`src/`):
   to the art's edges (so they follow drift and phase) and picks the cell size
   where the fitted grid's within-cell variance jumps. Has tests; synthetic
   image builders live in `__fixtures__/synthetic.ts`.
-- `lib/animation/` — pure animation assembly: anchoring frames on a shared
-  canvas (feet/center), sprite-sheet packing + Aseprite-style JSON, a GIF
-  encoder, `.spr` export, and the shared-pixel-size grid policy. Has tests.
+- `lib/animation/` — pure animation assembly: splitting AI sprite sheets
+  into poses (`splitSheet.ts`: foreground blobs + valley/ratio cuts, no grid
+  assumed), anchoring frames on a shared canvas (feet/center), sprite-sheet
+  packing + Aseprite-style JSON, a GIF encoder, `.spr` export, and the
+  shared-pixel-size grid policy. Has tests.
 - `lib/platform.ts` — Tauri detection and web fallbacks (download/file-pick).
 - `lib/storage.ts` — persistence helpers.
 

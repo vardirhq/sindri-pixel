@@ -4,6 +4,7 @@
 import type { FrameResult } from './engine';
 import type { FramePatch, FrameItem } from './frames';
 import { Icon } from './icons';
+import { SheetNotice } from './SheetNotice';
 
 export interface InspectorProps {
   frame: FrameItem;
@@ -11,6 +12,8 @@ export interface InspectorProps {
   result: FrameResult | undefined;
   globalDuration: number;
   onPatch: (patch: FramePatch, coalesce?: string) => void;
+  /** Split this frame's sprite sheet into one frame per pose. */
+  onSplit?: () => void;
 }
 
 const SCALE_MIN = 0.25;
@@ -32,7 +35,7 @@ function Stepper({ label, value, onChange }: { label: string; value: number; onC
   );
 }
 
-export function Inspector({ frame, index, result, globalDuration, onPatch }: InspectorProps) {
+export function Inspector({ frame, index, result, globalDuration, onPatch, onSplit }: InspectorProps) {
   const det = result?.detection;
   const moved = frame.offsetX !== 0 || frame.offsetY !== 0;
   return (
@@ -41,6 +44,8 @@ export function Inspector({ frame, index, result, globalDuration, onPatch }: Ins
         <span className="aa-insp-title">Frame {String(index + 1).padStart(2, '0')}</span>
         <span className="aa-insp-name" title={frame.name}>{frame.name}</span>
       </div>
+
+      {onSplit && result && result.poses > 1 && <SheetNotice poses={result.poses} onSplit={onSplit} compact />}
 
       <section>
         <div className="aa-label-row">

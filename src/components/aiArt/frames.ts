@@ -25,6 +25,8 @@ export type FramePatch = Partial<Pick<FrameItem, 'offsetX' | 'offsetY' | 'scale'
 export type FrameAction =
   | { type: 'add'; frames: FrameItem[]; at?: number }
   | { type: 'replace'; id: string; frame: FrameItem }
+  /** Replace one frame with several (a sprite sheet split into poses). */
+  | { type: 'expand'; id: string; frames: FrameItem[] }
   | { type: 'remove'; ids: string[] }
   | { type: 'move'; from: number; to: number }
   | { type: 'patch'; id: string; patch: FramePatch; coalesce?: string }
@@ -67,6 +69,8 @@ function apply(frames: FrameItem[], action: FrameAction): FrameItem[] {
     }
     case 'replace':
       return frames.map((f) => (f.id === action.id ? action.frame : f));
+    case 'expand':
+      return frames.flatMap((f) => (f.id === action.id ? action.frames : [f]));
     case 'remove':
       return frames.filter((f) => !action.ids.includes(f.id));
     case 'move': {

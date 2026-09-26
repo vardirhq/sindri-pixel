@@ -1,5 +1,6 @@
-// Sindri Pixel — animation assembly: anchoring downscaled frames on a shared
-// canvas, packing sprite sheets, and encoding GIF / .spr exports. Pure
+// Sindri Pixel — animation assembly: splitting AI sprite sheets into poses,
+// anchoring downscaled frames on a shared canvas, packing sprite sheets, and
+// encoding GIF / .spr exports. Pure
 // TypeScript (no DOM), shared by the web tool and testable in Node.
 
 export { anchorPoint, composeFrame, flipX, layoutFrames, opaqueBounds } from './layout';
@@ -9,4 +10,6 @@ export type { Rect, Sheet, SheetColumns, SheetMeta, SheetOptions } from './sheet
 export { encodeGif } from './gif';
 export type { GifOptions } from './gif';
 export { planGrids, sharedCellSize } from './sequence';
+export { cropPose, foregroundMask, splitSheet } from './splitSheet';
+export type { Pose, SheetSplit } from './splitSheet';
 export type { GridCache, GridPlan, SequenceInput } from './sequence';

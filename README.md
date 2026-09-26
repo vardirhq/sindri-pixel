@@ -110,6 +110,7 @@ The **AI Pixel-Art Studio** is a second, self-contained entry point (`web/`) tha
 
 - **Downscale**: one AI image turned into a true low-resolution sprite.
 - **Animate**: drop several AI-generated frames (a walk cycle, an attack…) and it builds the animation.
+  - **Sprite sheets** from a generator work too. Drop one and it offers **Split into N frames**. It finds the poses themselves rather than assuming a grid, so uneven spacing, sagging rows, poses that touch, detached bits like a sword flash, and stray labels are all handled.
   - Every frame is read at **one shared pixel size**, with **one shared palette**, and solid white or grey **backdrops are cleared**.
   - Frames are **aligned by the character's feet**, so poses the generator drew in different places stand on the same ground.
   - The stage has **onion skin**, a pixel grid and loop or ping-pong playback. Drag a frame, or nudge it with the arrow keys.
@@ -196,7 +197,7 @@ sindri-pixel/
 │   │   └── Welcome.tsx       # welcome screen, new-project wizard, recovery
 │   ├── lib/
 │   │   ├── pixelReconstruction/ # AI raster → true low-res sprite (grid fitting, palette)
-│   │   ├── animation/        # frame alignment, sprite sheets + JSON, GIF encoder, .spr export
+│   │   ├── animation/        # sheet splitting, frame alignment, sprite sheets + JSON, GIF, .spr
 │   │   ├── platform.ts       # Tauri detection + browser fallbacks
 │   │   ├── project-format.ts # versioned .spr parsing, migration & validation
 │   │   ├── sprite.ts         # compositing and sprite-sheet layout
