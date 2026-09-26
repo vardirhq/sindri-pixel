@@ -6,7 +6,7 @@ import { sampleCells, sampleCellsAverage } from './cellSampling';
 import { quantize, countDistinctColors, autoPaletteSize } from './paletteQuantize';
 import { removeIsolatedPixels, mergeSimilarColors, removeSolidBackground } from './cleanup';
 import { reconstructPixelArt, reconstructSequence, imageToPackedPixels, extractPalette } from './reconstruct';
-import { DEFAULT_OPTIONS, type PixelArtOptions, type RGBA } from './types';
+import { DEFAULT_OPTIONS, type PixelArtOptions, type RGBA, type RGBAImage } from './types';
 import {
   BLUE,
   GREEN,
@@ -299,11 +299,12 @@ describe('large scenes with small, soft pixels', () => {
     expect(Math.round(det.offsetX) % 3).toBe(2);
     expect(Math.round(det.offsetY) % 3).toBe(2);
     const { result } = reconstructPixelArt(shifted.image, { ...RAW, autoDetectGrid: false, cellSize: 3 });
-    expect(matchRate(result, shifted.logical, 1, 1)).toBeGreaterThan(0.85);
+    const aligned = matchRate(result, shifted.logical, 1, 1);
+    expect(aligned).toBeGreaterThan(0.95); // ~0.98
 
     // Same image, same size, no phase: markedly worse.
     const unaligned = reconstructPixelArt(shifted.image, { ...RAW, autoDetectGrid: false, targetWidth: GW + 1, targetHeight: GH + 1 });
-    expect(matchRate(unaligned.result, shifted.logical, 1, 1)).toBeLessThan(0.85); // ~0.78
+    expect(matchRate(unaligned.result, shifted.logical, 1, 1)).toBeLessThan(aligned - 0.05); // ~0.89
   });
 
   it('auto-detects the soft 3px cell instead of a coarse multiple', () => {
@@ -381,6 +382,22 @@ describe('fitted grids', () => {
     expect([det.gridWidth, det.gridHeight]).toEqual([80, 60]);
     expect(det.confidence).not.toBe('low');
     expect(matchRate(reconstructPixelArt(image, RAW_AUTO).result, logical)).toBeGreaterThan(0.95);
+  });
+
+  it('recovers the colours of soft 2px pixels', () => {
+    // At 2px the anti-aliasing reaches every pixel's centre: nothing in the
+    // source holds a true colour, so plain voting returns blends. Deblurring
+    // first recovers most of them, in the raw result and after the default
+    // palette and cleanup passes alike.
+    const { image, logical } = softScene(300, 200, 2, 5);
+    expect(matchRate(reconstructPixelArt(image, RAW_AUTO).result, logical)).toBeGreaterThan(0.78); // ~0.80, was ~0.63
+    const cleaned = reconstructPixelArt(image, { ...DEFAULT_OPTIONS, autoDetectGrid: true }).result;
+    expect(matchRate(cleaned, logical)).toBeGreaterThan(0.75); // ~0.79, was ~0.53
+  });
+
+  it('recovers the colours of 3px pixels under a heavy (5×5) blur', () => {
+    const { image, logical } = softScene(200, 133, 3, 42, 0, 2);
+    expect(matchRate(reconstructPixelArt(image, RAW_AUTO).result, logical)).toBeGreaterThan(0.79); // ~0.82, was ~0.74
   });
 
   it('detects soft 2px pixels without a manual pixel size', () => {
@@ -562,7 +579,97 @@ describe('cell sampling', () => {
   });
 });
 
+// ── Soft alpha edges (regression) ───────────────────────────────────────────
+// A real AI sheet stored its "solid" pixels at 94–99% opacity and ringed
+// every sprite with a darkened, half-transparent anti-aliasing fringe. The
+// sampler passed both through: every output pixel was faintly see-through and
+// a dark ring of fringe cells haloed the outline.
+
+describe('soft alpha edges', () => {
+  function softEdged(): { image: RGBAImage; logical: (RGBA | null)[][] } {
+    const G = 12;
+    const CELL = 6;
+    const logical: (RGBA | null)[][] = Array.from({ length: G }, (_, y) =>
+      Array.from({ length: G }, (_, x) => ((x - 5.5) ** 2 + (y - 5.5) ** 2 < 16 ? ((x + y) % 3 ? RED : BLUE) : null)));
+    const image = makeImage(G * CELL, G * CELL);
+    for (let y = 0; y < G * CELL; y++) {
+      for (let x = 0; x < G * CELL; x++) {
+        const c = logical[Math.floor(y / CELL)][Math.floor(x / CELL)];
+        if (c) { put(image, x, y, { ...c, a: 245 }); continue; }
+        // Dark, half-transparent fringe within 2px of the sprite.
+        const near = [-2, -1, 1, 2].some((d) =>
+          logical[Math.floor(y / CELL)]?.[Math.floor((x + d) / CELL)] || logical[Math.floor((y + d) / CELL)]?.[Math.floor(x / CELL)]);
+        if (near) put(image, x, y, { r: 30, g: 20, b: 20, a: 110 });
+      }
+    }
+    return { image, logical };
+  }
+
+  for (const samplingMode of ['mode', 'average'] as const) {
+    it(`gives solid-or-clear pixels without a halo (${samplingMode})`, () => {
+      const { image, logical } = softEdged();
+      const { result } = reconstructPixelArt(image, { ...RAW, samplingMode, autoDetectGrid: false, targetWidth: 12, targetHeight: 12 });
+      for (let y = 0; y < 12; y++) {
+        for (let x = 0; x < 12; x++) {
+          const out = get(result, x, y);
+          expect([0, 255]).toContain(out.a); // never see-through
+          if (!logical[y][x]) expect(out.a).toBe(0); // no fringe cells
+        }
+      }
+    });
+  }
+
+  it('keeps colors from the solid pixels, not the dark fringe', () => {
+    const { image, logical } = softEdged();
+    const { result } = reconstructPixelArt(image, { ...RAW, autoDetectGrid: false, targetWidth: 12, targetHeight: 12 });
+    for (let y = 0; y < 12; y++) {
+      for (let x = 0; x < 12; x++) {
+        const want = logical[y][x];
+        if (want) expect(get(result, x, y)).toEqual(want);
+      }
+    }
+  });
+
+  it('keeps partial alpha when the transparent-background option is off', () => {
+    const { image } = softEdged();
+    const { result } = reconstructPixelArt(image, { ...RAW, transparentBackground: false, autoDetectGrid: false, targetWidth: 12, targetHeight: 12 });
+    expect(get(result, 5, 5).a).toBe(245);
+  });
+});
+
 // ── Cell sampling: average / detail-preserving mode ─────────────────────────
+
+describe('deblurring small pixels', () => {
+  it('never overshoots a hard edge', () => {
+    // Crisp 2px checkerboard: already sharp, so every colour must come
+    // through exactly — no ringing past red or blue.
+    const logical = Array.from({ length: 8 }, (_, y) => Array.from({ length: 8 }, (_, x) => ((x + y) % 2 ? RED : BLUE)));
+    const out = sampleCells(upscale(logical, 2), 8, 8, false);
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) expect(get(out, x, y)).toEqual(logical[y][x]);
+    }
+  });
+
+  it('keeps a transparent backdrop out of the colours', () => {
+    // A soft 2px sprite on transparent black: the backdrop's RGB must not
+    // darken the outline, and alpha stays binary.
+    const W = 12;
+    const img = makeImage(W * 2, W * 2);
+    for (let y = 0; y < W * 2; y++) {
+      for (let x = 0; x < W * 2; x++) {
+        const inside = x >= 4 && x < 20 && y >= 4 && y < 20;
+        put(img, x, y, inside ? { ...RED, a: 250 } : { r: 0, g: 0, b: 0, a: 0 });
+      }
+    }
+    const out = sampleCells(img, W, W, true);
+    for (let y = 0; y < W; y++) {
+      for (let x = 0; x < W; x++) {
+        const inside = x >= 2 && x < 10 && y >= 2 && y < 10;
+        expect(get(out, x, y)).toEqual(inside ? RED : { r: 0, g: 0, b: 0, a: 0 });
+      }
+    }
+  });
+});
 
 describe('cell sampling — average (detail preserving)', () => {
   it('blends a gradient cell where mode would collapse it', () => {
