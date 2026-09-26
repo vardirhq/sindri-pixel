@@ -40,6 +40,20 @@ a {
   flex-direction: column;
 }
 
+/* The app is the viewport: pinned to it, and clipped rather than hidden, so
+   nothing — not even a script — can scroll the page away from the stage and
+   leave it stuck there with scrolling turned off. (The narrow layout below
+   scrolls normally.) */
+@media (min-width: 821px) {
+  .app {
+    position: fixed;
+    inset: 0;
+    height: auto;
+    overflow: hidden;
+    overflow: clip;
+  }
+}
+
 /* ─── masthead ───────────────────────────────────────────── */
 
 .masthead {

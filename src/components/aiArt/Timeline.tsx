@@ -40,10 +40,19 @@ export function Timeline({
   const [insertAt, setInsertAt] = React.useState<number | null>(null);
   const stripRef = React.useRef<HTMLDivElement | null>(null);
 
-  // Keep the selected frame scrolled into view (playback, keyboard stepping).
+  // Keep the selected frame visible in the strip (playback, keyboard
+  // stepping). Scroll only the strip, sideways: scrollIntoView would also
+  // scroll every ancestor — including a page with scrolling turned off,
+  // leaving the stage pushed out of reach.
   React.useEffect(() => {
-    const el = stripRef.current?.querySelector<HTMLElement>(`[data-index="${selected}"]`);
-    el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const strip = stripRef.current;
+    const el = strip?.querySelector<HTMLElement>(`[data-index="${selected}"]`);
+    if (!strip || !el) return;
+    const s = strip.getBoundingClientRect();
+    const c = el.getBoundingClientRect();
+    const pad = 14;
+    if (c.left < s.left + pad) strip.scrollLeft -= s.left + pad - c.left;
+    else if (c.right > s.right - pad) strip.scrollLeft += c.right - (s.right - pad);
   }, [selected]);
 
   const slotFor = (e: React.DragEvent, i: number) => {
