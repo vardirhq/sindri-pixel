@@ -1,5 +1,6 @@
-// Loading image files into frames.
+// Loading image files into frames, and splitting sprite sheets into them.
 
+import { cropPose, splitSheet } from '../../lib/animation';
 import { loadImageData } from '../../lib/platform';
 import { makeFrame, naturalCompare, type FrameItem } from './frames';
 
@@ -36,4 +37,22 @@ export async function framesFromFiles(files: File[]): Promise<{ frames: FrameIte
     }
   }
   return { frames, errors };
+}
+
+/**
+ * Split a frame whose source is a sprite sheet into one frame per pose, in
+ * reading order. Each pose is cut out clean (its own pixels only) and keeps
+ * the sheet's per-frame settings; a sheet with one pose comes back as is.
+ */
+export function splitFrame(frame: FrameItem): FrameItem[] {
+  const split = splitSheet(frame.source);
+  if (split.poses.length < 2) return [frame];
+  const base = frame.name.replace(/\.[^.]+$/, '');
+  const digits = String(split.poses.length).length;
+  return split.poses.map((pose, i) => ({
+    ...makeFrame(`${base} ${String(i + 1).padStart(Math.max(2, digits), '0')}.png`, cropPose(frame.source, split, pose)),
+    scale: frame.scale,
+    flipX: frame.flipX,
+    duration: frame.duration,
+  }));
 }

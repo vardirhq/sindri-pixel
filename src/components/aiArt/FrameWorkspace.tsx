@@ -6,6 +6,7 @@
 import React from 'react';
 import type { Anchor } from '../../lib/animation';
 import type { EngineOutput } from './useEngine';
+import { splitFrame } from './files';
 import { newFrameId, type FrameAction, type FrameHistory, type FramePatch } from './frames';
 import { Inspector } from './Inspector';
 import { Stage } from './Stage';
@@ -63,6 +64,11 @@ export function FrameWorkspace({
     dispatch({ type: 'duplicate', id, newId: newFrameId() });
     player.setIndex(i + 1);
   }, [dispatch, frames, player]);
+  const split = React.useCallback(() => {
+    if (!frame) return;
+    dispatch({ type: 'expand', id: frame.id, frames: splitFrame(frame) });
+    player.setIndex(index);
+  }, [dispatch, frame, index, player]);
   const move = React.useCallback((from: number, to: number) => {
     dispatch({ type: 'move', from, to });
     player.setIndex(to > from ? to - 1 : to);
@@ -173,6 +179,7 @@ export function FrameWorkspace({
           result={engine.results.get(frame.id)}
           globalDuration={frameDuration({ ...frame, duration: null }, view.fps)}
           onPatch={patch}
+          onSplit={split}
         />
       )}
       <Timeline

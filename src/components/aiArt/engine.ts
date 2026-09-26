@@ -11,7 +11,7 @@ import {
   type PixelArtOptions,
   type RGBAImage,
 } from '../../lib/pixelReconstruction';
-import { planGrids, type GridCache } from '../../lib/animation';
+import { planGrids, splitSheet, type GridCache } from '../../lib/animation';
 
 export interface JobFrame {
   id: string;
@@ -30,6 +30,8 @@ export interface FrameResult {
   sprite: RGBAImage;
   detection: GridDetectionResult;
   colorCount: number;
+  /** Poses found in the source: more than one means it's a sprite sheet. */
+  poses: number;
 }
 
 export interface JobResult {
@@ -52,6 +54,7 @@ export type WorkerOut =
 export class EngineState {
   sources = new Map<string, RGBAImage>();
   cache: GridCache = new Map();
+  poseCounts = new Map<string, number>();
   latestJob = 0;
 
   add(id: string, image: RGBAImage) {
@@ -61,6 +64,7 @@ export class EngineState {
   remove(ids: string[]) {
     for (const id of ids) {
       this.sources.delete(id);
+      this.poseCounts.delete(id);
       for (const key of [...this.cache.keys()]) if (key.startsWith(`${id}:`)) this.cache.delete(key);
     }
   }
@@ -83,6 +87,7 @@ export class EngineState {
       await tick();
       if (stale()) return null;
       planGrids([frames[i]], req.options, false, this.cache);
+      if (!this.poseCounts.has(frames[i].id)) this.poseCounts.set(frames[i].id, splitSheet(frames[i].source).poses.length);
       progress(i + 1, frames.length);
     }
     await tick();
@@ -100,6 +105,7 @@ export class EngineState {
         sprite: r.result,
         detection: r.detection,
         colorCount: countDistinctColors(r.result),
+        poses: this.poseCounts.get(frames[i].id) ?? 1,
       })),
     };
   }

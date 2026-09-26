@@ -12,6 +12,9 @@ import react from '@vitejs/plugin-react';
 // subpath instead.
 export default defineConfig({
   root: 'web',
+  // Own dependency cache, so `pnpm dev` and `pnpm dev:web` can run side by
+  // side without invalidating each other's pre-bundled deps.
+  cacheDir: '../node_modules/.vite-web',
   base: process.env.VITE_WEB_BASE ?? '/',
   plugins: [react()],
   clearScreen: false,

@@ -59,6 +59,15 @@ describe('frame history', () => {
     vi.useRealTimers();
   });
 
+  it('expands one frame into several in place, as one undo step', () => {
+    let h = withFrames(3);
+    const parts = [makeFrame('sheet 01.png', img), makeFrame('sheet 02.png', img)];
+    h = framesReducer(h, { type: 'expand', id: h.present[1].id, frames: parts });
+    expect(names(h)).toEqual(['f0.png', 'sheet 01.png', 'sheet 02.png', 'f2.png']);
+    h = framesReducer(h, { type: 'undo' });
+    expect(names(h)).toEqual(['f0.png', 'f1.png', 'f2.png']);
+  });
+
   it('resets', () => {
     expect(framesReducer(withFrames(3), { type: 'reset' })).toBe(EMPTY_HISTORY);
   });

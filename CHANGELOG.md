@@ -16,6 +16,13 @@
   - **Undo/redo** and keyboard shortcuts (`?` lists them).
   - Reconstruction runs in a **Web Worker**, so the page stays responsive.
   - The web tool **exports** a sprite sheet (PNG with Aseprite-style JSON), an animated GIF, or a `.spr` project for the editor. In the desktop app the frames land in the editor's timeline.
+- **Split AI sprite sheets into frames.** Drop a generated sheet into the web tool or the editor's *Import AI art…* and it offers **Split into N frames**. The poses go straight into the Animate workspace in reading order, one frame each.
+  - **No grid assumed**, because generated sheets rarely have one. It finds the poses themselves as blobs of foreground: pixels on transparency, or pixels that stand out from a flat backdrop.
+  - **Stacked rows:** rows packed so close that hair touches the feet above are cut at the near-empty rows between them.
+  - **Touching poses:** poses touching side by side are cut, and each side keeps the pixels it reaches first from its own body, so a fist reaching across stays with its arm.
+  - **Fragments and labels:** detached bits (a sword flash) rejoin their pose; far-off specks and text labels are dropped.
+  - **Clean crops:** each frame is cut out with only its own pixels plus what they enclose, such as the whites of the eyes.
+  - **Result:** a real 1983×793 AI walk-cycle sheet splits into its 16 poses in under 0.1s.
 - Added a **Remove solid background** option to both AI-art front ends. It clears a flat backdrop by flood-filling from the image edges, so enclosed areas of the same color, like the white of an eye, stay.
 
 ### Fixed

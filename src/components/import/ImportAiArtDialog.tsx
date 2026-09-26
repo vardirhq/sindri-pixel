@@ -25,6 +25,8 @@ import {
   framesFromFiles,
   framesReducer,
   pickImageFiles,
+  SheetNotice,
+  splitFrame,
   useComposition,
   useEngine,
   usePlayer,
@@ -419,6 +421,12 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
         )}
 
         {error && <div style={{ color: 'var(--danger, #e05555)', fontSize: 12, marginTop: 10 }}>{error}</div>}
+
+        {single && singleResult && singleResult.poses > 1 && (
+          <div style={{ marginTop: 12 }}>
+            <SheetNotice poses={singleResult.poses} onSplit={() => dispatch({ type: 'expand', id: single.id, frames: splitFrame(single) })} />
+          </div>
+        )}
 
         {single && (
           <React.Fragment>

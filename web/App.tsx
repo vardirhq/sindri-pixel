@@ -18,6 +18,8 @@ import {
   framesReducer,
   newFrameId,
   pickImageFiles,
+  SheetNotice,
+  splitFrame,
   useComposition,
   useEngine,
   usePlayer,
@@ -81,6 +83,15 @@ export function App() {
   }, [frames, mode, player]);
 
   const pickFiles = React.useCallback(async (at?: number) => addFiles(await pickImageFiles(), at), [addFiles]);
+
+  // A sprite sheet becomes one frame per pose, straight into Animate.
+  const splitSelected = React.useCallback(() => {
+    if (!selected) return;
+    const at = frames.indexOf(selected);
+    dispatch({ type: 'expand', id: selected.id, frames: splitFrame(selected) });
+    setMode('animate');
+    player.setIndex(at);
+  }, [frames, selected, player]);
 
   // Paste from the clipboard — the usual path when the image came out of a
   // generator in another tab — and drop anywhere in the window.
@@ -233,6 +244,9 @@ export function App() {
                   <span>{loading ? 'reading…' : engine.busy ? 'updating…' : 'drop or paste to add'}</span>
                   {error && <span style={{ color: 'var(--red)' }}>{error}</span>}
                 </div>
+                {selectedResult && selectedResult.poses > 1 && (
+                  <SheetNotice poses={selectedResult.poses} onSplit={splitSelected} />
+                )}
                 <DownscaleView source={selected.source} sprite={selectedResult?.sprite ?? null} name={selected.name} />
                 {frames.length > 1 && (
                   <div className="downscale-strip">
