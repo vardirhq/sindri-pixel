@@ -5,10 +5,15 @@ import {
   countDistinctColors,
   extractPalette,
   buildOptions,
+  clampPixelSize,
+  detectionNotice,
   GRID_PRESETS,
   PALETTE_PRESETS,
   CLEAN_SPRITE_PRESET,
   HIGH_DETAIL_PRESET,
+  MAX_OUTPUT_SIZE,
+  MIN_PIXEL_SIZE,
+  MAX_PIXEL_SIZE,
   type GridChoice,
   type PaletteChoice,
   type CleanupSettings,
@@ -102,6 +107,7 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
   const [error, setError] = React.useState<string | null>(null);
 
   const [gridChoice, setGridChoice] = React.useState<GridChoice>('auto');
+  const [pixelSize, setPixelSize] = React.useState(4);
   const [customW, setCustomW] = React.useState(64);
   const [customH, setCustomH] = React.useState(64);
   const [samplingMode, setSamplingMode] = React.useState<SamplingMode>('mode');
@@ -118,7 +124,7 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
   React.useEffect(() => {
     if (open) {
       setFileName(''); setSource(null); setDragging(false); setError(null);
-      setGridChoice('auto'); setCustomW(64); setCustomH(64);
+      setGridChoice('auto'); setPixelSize(4); setCustomW(64); setCustomH(64);
       setSamplingMode('mode'); setPaletteChoice('auto');
       setRemoveIsolatedPixels(true); setMergeSimilarColors(true);
       setRemoveAntiAliasing(true); setTransparentBackground(true);
@@ -135,9 +141,9 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
   };
 
   const options = React.useMemo(() => buildOptions({
-    gridChoice, customWidth: customW, customHeight: customH, samplingMode, paletteChoice,
+    gridChoice, pixelSize, customWidth: customW, customHeight: customH, samplingMode, paletteChoice,
     mergeSimilarColors, removeAntiAliasing, removeIsolatedPixels, transparentBackground,
-  }), [gridChoice, customW, customH, samplingMode, paletteChoice, mergeSimilarColors, removeAntiAliasing, removeIsolatedPixels, transparentBackground]);
+  }), [gridChoice, pixelSize, customW, customH, samplingMode, paletteChoice, mergeSimilarColors, removeAntiAliasing, removeIsolatedPixels, transparentBackground]);
 
   // Recompute the reconstruction whenever the source or options change.
   const reconstruction = React.useMemo(() => {
@@ -189,6 +195,8 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
   if (!open) return null;
 
   const det = reconstruction?.detection;
+  const notice = det && source ? detectionNotice(det, source) : null;
+  const usePixelSize = (px: number) => { setPixelSize(px); setGridChoice('pixel'); };
 
   return (
     <div style={s.scrim} onClick={onClose}>
@@ -226,12 +234,20 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
                 <select style={s.select} value={gridChoice} onChange={(e) => setGridChoice(e.target.value as GridChoice)}>
                   {GRID_PRESETS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
                 </select>
+                {gridChoice === 'pixel' && (
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+                    <input type="number" min={MIN_PIXEL_SIZE} max={MAX_PIXEL_SIZE} step={0.1} value={pixelSize} style={s.numInput}
+                      aria-label="Source pixels per art pixel"
+                      onChange={(e) => setPixelSize(clampPixelSize(parseFloat(e.target.value)))} />
+                    <span style={{ fontSize: 11.5, color: 'var(--ink-3)', whiteSpace: 'nowrap' }}>px</span>
+                  </div>
+                )}
                 {gridChoice === 'custom' && (
                   <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                    <input type="number" min={1} max={512} value={customW} style={s.numInput}
-                      onChange={(e) => setCustomW(Math.max(1, Math.min(512, parseInt(e.target.value) || 1)))} />
-                    <input type="number" min={1} max={512} value={customH} style={s.numInput}
-                      onChange={(e) => setCustomH(Math.max(1, Math.min(512, parseInt(e.target.value) || 1)))} />
+                    <input type="number" min={1} max={MAX_OUTPUT_SIZE} value={customW} style={s.numInput}
+                      onChange={(e) => setCustomW(Math.max(1, Math.min(MAX_OUTPUT_SIZE, parseInt(e.target.value) || 1)))} />
+                    <input type="number" min={1} max={MAX_OUTPUT_SIZE} value={customH} style={s.numInput}
+                      onChange={(e) => setCustomH(Math.max(1, Math.min(MAX_OUTPUT_SIZE, parseInt(e.target.value) || 1)))} />
                   </div>
                 )}
 
@@ -283,10 +299,20 @@ export function ImportAiArtDialog({ open, onClose, onConfirm }: ImportAiArtDialo
             {det && (
               <div style={{ marginTop: 20, borderTop: '1px solid var(--rule)', paddingTop: 12 }}>
                 <div style={s.detailRow}><span style={s.detailKey}>Source resolution</span><span>{source.width} × {source.height}px</span></div>
-                <div style={s.detailRow}><span style={s.detailKey}>Detected cell size</span><span>{Math.round(det.cellSize)}px</span></div>
+                <div style={s.detailRow}><span style={s.detailKey}>{gridChoice === 'pixel' ? 'Cell size' : 'Detected cell size'}</span><span>{+det.cellSize.toFixed(1)}px</span></div>
                 <div style={s.detailRow}><span style={s.detailKey}>Output grid</span><span>{det.gridWidth} × {det.gridHeight}</span></div>
                 <div style={s.detailRow}><span style={s.detailKey}>Detection confidence</span><span style={{ color: confidenceColor(det.confidence) }}>{det.confidence}</span></div>
                 <div style={s.detailRow}><span style={s.detailKey}>Colors</span><span>{reconstruction?.colorCount ?? 0}</span></div>
+                {notice && (
+                  <div role="status" style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5, color: 'var(--amber)', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                    <span style={{ flex: 1 }}>{notice.message}</span>
+                    {notice.suggestedPixelSize !== undefined && (
+                      <button style={s.preset} onClick={() => usePixelSize(notice.suggestedPixelSize!)}>
+                        Use {notice.suggestedPixelSize} px
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </React.Fragment>

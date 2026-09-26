@@ -12,11 +12,15 @@ import {
   countDistinctColors,
   extractPalette,
   buildOptions,
+  clampPixelSize,
+  detectionNotice,
   GRID_PRESETS,
   PALETTE_PRESETS,
   CLEAN_SPRITE_PRESET,
   HIGH_DETAIL_PRESET,
   MAX_OUTPUT_SIZE,
+  MIN_PIXEL_SIZE,
+  MAX_PIXEL_SIZE,
   type GridChoice,
   type PaletteChoice,
   type CleanupSettings,
@@ -116,6 +120,7 @@ export function DownscaleApp() {
   const [busy, setBusy] = React.useState(false);
 
   const [gridChoice, setGridChoice] = React.useState<GridChoice>('auto');
+  const [pixelSize, setPixelSize] = React.useState(4);
   const [customW, setCustomW] = React.useState(64);
   const [customH, setCustomH] = React.useState(64);
   const [samplingMode, setSamplingMode] = React.useState<SamplingMode>('mode');
@@ -135,9 +140,9 @@ export function DownscaleApp() {
   };
 
   const options = React.useMemo(() => buildOptions({
-    gridChoice, customWidth: customW, customHeight: customH, samplingMode, paletteChoice,
+    gridChoice, pixelSize, customWidth: customW, customHeight: customH, samplingMode, paletteChoice,
     mergeSimilarColors, removeAntiAliasing, removeIsolatedPixels, transparentBackground,
-  }), [gridChoice, customW, customH, samplingMode, paletteChoice, mergeSimilarColors,
+  }), [gridChoice, pixelSize, customW, customH, samplingMode, paletteChoice, mergeSimilarColors,
     removeAntiAliasing, removeIsolatedPixels, transparentBackground]);
 
   const reconstruction = React.useMemo(() => {
@@ -231,6 +236,8 @@ export function DownscaleApp() {
 
   const det = reconstruction?.detection;
   const out = reconstruction?.result;
+  const notice = det && source ? detectionNotice(det, source) : null;
+  const usePixelSize = (px: number) => { setPixelSize(px); setGridChoice('pixel'); };
 
   return (
     <div className="app">
@@ -280,6 +287,16 @@ export function DownscaleApp() {
               <select value={gridChoice} onChange={(e) => setGridChoice(e.target.value as GridChoice)}>
                 {GRID_PRESETS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
               </select>
+              {gridChoice === 'pixel' && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+                  <input
+                    type="number" min={MIN_PIXEL_SIZE} max={MAX_PIXEL_SIZE} step={0.1} value={pixelSize}
+                    aria-label="Source pixels per art pixel"
+                    onChange={(e) => setPixelSize(clampPixelSize(parseFloat(e.target.value)))}
+                  />
+                  <span>px</span>
+                </div>
+              )}
               {gridChoice === 'custom' && (
                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                   <input
@@ -331,13 +348,23 @@ export function DownscaleApp() {
 
               {det && (
                 <div className="stats">
-                  <div className="stat"><span className="k">Cell size</span><span>{Math.round(det.cellSize)}px</span></div>
+                  <div className="stat"><span className="k">Cell size</span><span>{+det.cellSize.toFixed(1)}px</span></div>
                   <div className="stat"><span className="k">Output grid</span><span>{det.gridWidth} × {det.gridHeight}</span></div>
                   <div className="stat">
                     <span className="k">Confidence</span>
                     <span style={{ color: confidenceColor(det.confidence) }}>{det.confidence}</span>
                   </div>
                   <div className="stat"><span className="k">Colors</span><span>{reconstruction?.colorCount ?? 0}</span></div>
+                  {notice && (
+                    <div className="notice" role="status">
+                      {notice.message}
+                      {notice.suggestedPixelSize !== undefined && (
+                        <button onClick={() => usePixelSize(notice.suggestedPixelSize!)}>
+                          Use {notice.suggestedPixelSize} px
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {reconstruction && reconstruction.palette.length > 0 && (
                     <div className="swatches">
                       {reconstruction.palette.slice(0, 48).map((hex) => (
