@@ -52,6 +52,8 @@ const GRID_TARGET = 384;
 const CELL_FILL = 0.15;
 /** Blobs smaller than this share of the largest are fragments, not poses. */
 const POSE_MIN_AREA = 0.25;
+/** After cuts, a fragment this large vs the median pose is a pose after all. */
+const POSE_PROMOTE_AREA = 0.4;
 /** Fragments within this share of a typical pose height join that pose. */
 const MERGE_GAP = 0.35;
 /** A blob this many typical widths/heights across holds several poses. */
@@ -185,7 +187,7 @@ export function splitSheet(image: RGBAImage): SheetSplit {
   // Poses vs fragments.
   const largest = Math.max(...blobs.map((b) => b.area));
   let poses = blobs.filter((b) => b.area >= POSE_MIN_AREA * largest);
-  const fragments = blobs.filter((b) => b.area < POSE_MIN_AREA * largest);
+  let fragments = blobs.filter((b) => b.area < POSE_MIN_AREA * largest);
   let typH = median(poses.map((b) => b.y1 - b.y0));
   let typW = median(poses.map((b) => b.x1 - b.x0));
 
@@ -376,7 +378,18 @@ export function splitSheet(image: RGBAImage): SheetSplit {
       }
     }
   };
-  poses = poses.flatMap((b) => splitAxis(b, false, 'valley')).flatMap((b) => splitAxis(b, true, 'valley'));
+  const valleySplit = (bs: Blob[]) =>
+    bs.flatMap((b) => splitAxis(b, false, 'valley')).flatMap((b) => splitAxis(b, true, 'valley'));
+  poses = valleySplit(poses);
+  // "Small next to the largest blob" was judged before the cuts. When the
+  // largest was a chain of touching poses, a lone pose looked like a
+  // fragment; measured against the poses the cuts produced, it isn't one.
+  const typArea = median(poses.map((b) => b.area));
+  const promoted = fragments.filter((f) => f.area >= POSE_PROMOTE_AREA * typArea);
+  if (promoted.length) {
+    poses = [...poses, ...valleySplit(promoted)];
+    fragments = fragments.filter((f) => !promoted.includes(f));
+  }
   typH = median(poses.map((b) => b.y1 - b.y0));
   typW = median(poses.map((b) => b.x1 - b.x0));
   poses = poses.flatMap((b) => splitAxis(b, true, 'ratio')).flatMap((b) => splitAxis(b, false, 'ratio'));
