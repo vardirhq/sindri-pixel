@@ -17,7 +17,13 @@
 //     or taller than a typical pose, or with a near-empty row/column running
 //     through it, is cut there — poses that touch — and each side keeps the
 //     pixels it reaches first from its own core.
-//  4. Order. Rows by vertical center, then left to right.
+//  4. Ownership at full resolution. The coarse grid (and its growing) can
+//     join poses that never touch — a boot hanging down beside the hair of
+//     the pose below — and a cut can then hand the boot to the wrong pose.
+//     So each connected shape of real pixels goes whole to the pose that
+//     holds most of it; only a shape shared by poses that truly touch keeps
+//     the cut.
+//  5. Order. Rows by vertical center, then left to right.
 //
 // Getting most poses right is the goal; the animation workspace (feet
 // alignment, per-frame move/scale, onion skin) fixes the rest by hand.
@@ -44,6 +50,8 @@ export interface SheetSplit {
   labels: Int32Array;
   /** Foreground mask per source pixel. */
   mask: Uint8Array;
+  /** Pose label per source pixel (0 = none): who each pixel belongs to. */
+  owner: Int32Array;
 }
 
 /** Coarse grid resolution: about this many cells along the longer side. */
@@ -60,6 +68,9 @@ const MERGE_GAP = 0.35;
 const SPLIT_RATIO = 1.6;
 /** A row/column this sparse (vs the blob's median) is a gap between poses. */
 const VALLEY_DEPTH = 0.25;
+/** A pixel shape is shared by touching poses when its runner-up pose holds
+ *  at least this share of it; otherwise it goes whole to one pose. */
+const SHARED_SHAPE = 0.2;
 
 /** Which pixels are foreground: opaque art on transparency, or anything that
  *  stands out from a flat (possibly noisy) backdrop. */
@@ -177,7 +188,10 @@ export function splitSheet(image: RGBAImage): SheetSplit {
   }
   blobs = blobs.filter((b) => b.area > 0);
   if (blobs.length === 0) {
-    return { poses: [{ x: 0, y: 0, w: width, h: height, label: 0 }], cell, gridWidth: gw, gridHeight: gh, labels, mask };
+    return {
+      poses: [{ x: 0, y: 0, w: width, h: height, label: 0 }],
+      cell, gridWidth: gw, gridHeight: gh, labels, mask, owner: new Int32Array(width * height),
+    };
   }
 
   const relabel = (from: number, to: number) => {
@@ -414,6 +428,25 @@ export function splitSheet(image: RGBAImage): SheetSplit {
     }
   }
 
+  // Settle ownership per pixel, then measure each pose from its own pixels
+  // (in cell units, fractional, so the boxes below come out pixel-exact).
+  const owner = pixelOwners(mask, width, height, labels, gw, cell, new Set(poses.map((p) => p.label)));
+  const boxes = new Map<number, Blob>();
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const l = owner[y * width + x];
+      if (!l) continue;
+      const b = boxes.get(l);
+      if (b) {
+        b.area++;
+        if (x < b.x0) b.x0 = x;
+        if (x + 1 > b.x1) b.x1 = x + 1;
+        if (y + 1 > b.y1) b.y1 = y + 1;
+      } else boxes.set(l, { label: l, area: 1, x0: x, y0: y, x1: x + 1, y1: y + 1 });
+    }
+  }
+  poses = [...boxes.values()].map((b) => ({ ...b, x0: b.x0 / cell, y0: b.y0 / cell, x1: b.x1 / cell, y1: b.y1 / cell }));
+
   // Reading order: rows by vertical center, then left to right.
   const cy = (b: Blob) => (b.y0 + b.y1) / 2;
   const rows: Blob[][] = [];
@@ -429,13 +462,13 @@ export function splitSheet(image: RGBAImage): SheetSplit {
   const pad = Math.max(2, Math.round(0.06 * Math.min(typW, typH) * cell));
   return {
     poses: ordered.map((b) => {
-      const x = Math.max(0, b.x0 * cell - pad);
-      const y = Math.max(0, b.y0 * cell - pad);
+      const x = Math.max(0, Math.round(b.x0 * cell) - pad);
+      const y = Math.max(0, Math.round(b.y0 * cell) - pad);
       return {
         x,
         y,
-        w: Math.min(width, b.x1 * cell + pad) - x,
-        h: Math.min(height, b.y1 * cell + pad) - y,
+        w: Math.min(width, Math.round(b.x1 * cell) + pad) - x,
+        h: Math.min(height, Math.round(b.y1 * cell) + pad) - y,
         label: b.label,
       };
     }),
@@ -444,7 +477,67 @@ export function splitSheet(image: RGBAImage): SheetSplit {
     gridHeight: gh,
     labels,
     mask,
+    owner,
   };
+}
+
+/**
+ * Pose label per source pixel. Each 8-connected shape of foreground pixels
+ * goes whole to the pose whose cells hold most of it, unless a second pose
+ * holds a real share too (poses that touch), where each pixel keeps its
+ * cell's pose.
+ */
+function pixelOwners(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  labels: Int32Array,
+  gw: number,
+  cell: number,
+  poseLabels: Set<number>,
+): Int32Array {
+  const owner = new Int32Array(width * height);
+  const cellPose = (i: number) => {
+    const x = i % width;
+    const l = labels[Math.floor((i - x) / width / cell) * gw + Math.floor(x / cell)];
+    return poseLabels.has(l) ? l : 0;
+  };
+  const seen = new Uint8Array(width * height);
+  const shape: number[] = [];
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || seen[start]) continue;
+    shape.length = 0;
+    seen[start] = 1;
+    shape.push(start);
+    for (let k = 0; k < shape.length; k++) {
+      const i = shape[k];
+      const x = i % width;
+      const y = (i - x) / width;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= width) continue;
+          const j = ny * width + nx;
+          if (mask[j] && !seen[j]) {
+            seen[j] = 1;
+            shape.push(j);
+          }
+        }
+      }
+    }
+    const votes = new Map<number, number>();
+    for (const i of shape) {
+      const l = cellPose(i);
+      if (l) votes.set(l, (votes.get(l) ?? 0) + 1);
+    }
+    const ranked = [...votes].sort((a, b) => b[1] - a[1]);
+    if (!ranked.length) continue; // a dropped speck or label
+    const shared = ranked.length > 1 && ranked[1][1] >= SHARED_SHAPE * shape.length;
+    for (const i of shape) owner[i] = (shared && cellPose(i)) || ranked[0][0];
+  }
+  return owner;
 }
 
 /**
@@ -458,10 +551,9 @@ export function cropPose(image: RGBAImage, split: SheetSplit, pose: Pose): RGBAI
   const keep = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) {
     const sy = py + y;
-    const crow = Math.floor(sy / split.cell) * split.gridWidth;
     for (let x = 0; x < w; x++) {
       const sx = px + x;
-      if (split.mask[sy * width + sx] && split.labels[crow + Math.floor(sx / split.cell)] === pose.label) keep[y * w + x] = 1;
+      if (split.owner[sy * width + sx] === pose.label) keep[y * w + x] = 1;
     }
   }
   // Outside = reachable from the crop's edge without crossing kept pixels.

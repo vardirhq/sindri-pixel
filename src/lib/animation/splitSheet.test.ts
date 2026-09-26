@@ -149,6 +149,46 @@ describe('sprite sheet splitting', () => {
     });
   });
 
+  it('keeps a boot with its pose when it hangs down beside the hair below', () => {
+    // Two rows, four columns, on a sheet large enough for a coarse 5px grid.
+    // Each upper pose's boot reaches down past the top of the hair of the
+    // pose below, 4px to its side: never touching, but closer than the grid
+    // can see. The narrowest row is the boot's top, so a straight cut there
+    // would give the boot to the pose below.
+    const img = makeImage(1920, 700);
+    const fill = (x0: number, y0: number, x1: number, y1: number, c: RGBA) => {
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) put(img, x, y, c);
+    };
+    const BOOT: RGBA = { r: 120, g: 70, b: 40, a: 255 };
+    const HAIR: RGBA = { r: 230, g: 100, b: 30, a: 255 };
+    for (let c = 0; c < 4; c++) {
+      const x = 40 + c * 470;
+      fill(x + 40, 20, x + 160, 220, COLORS[1]); // upper torso
+      fill(x + 70, 220, x + 90, 300, COLORS[1]); // legs
+      fill(x + 110, 220, x + 130, 300, COLORS[1]);
+      fill(x + 110, 300, x + 140, 340, BOOT); // boot, hanging low
+      fill(x, 315, x + 106, 360, HAIR); // hair of the pose below, 4px left
+      fill(x, 360, x + 170, 560, COLORS[2]); // lower head and body
+    }
+    const split = splitSheet(img);
+    expect(split.poses).toHaveLength(8);
+    const count = (crop: RGBAImage, c: RGBA) => {
+      let n = 0;
+      for (let i = 0; i < crop.width * crop.height; i++) {
+        const o = i * 4;
+        if (crop.data[o + 3] && crop.data[o] === c.r && crop.data[o + 1] === c.g && crop.data[o + 2] === c.b) n++;
+      }
+      return n;
+    };
+    for (let c = 0; c < 4; c++) {
+      const upper = cropPose(img, split, split.poses[c]);
+      const lower = cropPose(img, split, split.poses[4 + c]);
+      expect(count(upper, BOOT)).toBe(30 * 40);
+      expect(count(lower, BOOT)).toBe(0);
+      expect(count(lower, HAIR)).toBe(106 * 45);
+    }
+  });
+
   it('leaves a single sprite (with a detached sword and a shadow) whole', () => {
     const img = makeImage(200, 200);
     const rnd = lcg(3);
