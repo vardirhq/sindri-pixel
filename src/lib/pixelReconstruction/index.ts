@@ -4,7 +4,7 @@
 
 export { reconstructPixelArt, imageToPackedPixels, extractPalette } from './reconstruct';
 export type { ReconstructionResult } from './reconstruct';
-export { detectGrid, gridFromTarget } from './gridDetection';
+export { detectGrid, gridFromTarget, gridFromCellSize } from './gridDetection';
 export { sampleCells, sampleCellsAverage } from './cellSampling';
 export { quantize, countDistinctColors, autoPaletteSize } from './paletteQuantize';
 export { removeIsolatedPixels, mergeSimilarColors } from './cleanup';
@@ -14,9 +14,13 @@ export {
   PALETTE_PRESETS,
   CLEAN_SPRITE_PRESET,
   HIGH_DETAIL_PRESET,
+  MIN_PIXEL_SIZE,
+  MAX_PIXEL_SIZE,
   buildOptions,
+  clampPixelSize,
+  detectionNotice,
 } from './uiOptions';
-export type { GridChoice, PaletteChoice, CleanupSettings, UiChoices } from './uiOptions';
+export type { GridChoice, PaletteChoice, CleanupSettings, UiChoices, DetectionNotice } from './uiOptions';
 export type {
   PixelArtOptions,
   SamplingMode,

@@ -108,6 +108,8 @@ pnpm dev:web      # Vite dev server on http://localhost:1421
 
 The **AI Pixel-Art Downscaler** is a second, self-contained entry point (`web/`) that ships only the reconstruction pipeline — no editor, no Tauri. It fills the viewport like an application rather than scrolling like a page, and is published as a static site at **<https://pixel.vardir.no>**.
 
+Grid detection is automatic, but you can always override it. **Grid size → Pixel size** takes the size of one art pixel in source pixels (e.g. `3` for a 1536×1024 scene drawn in ~3px pixels). The grid is still phase-aligned to the image's edges. When auto-detection is unsure, the tool says so instead of passing off a coarse guess as the answer. If it had to hold the output to a small size, it offers the detected pixel size as a one-click fix.
+
 ### Build for production
 
 ```bash
@@ -205,7 +207,7 @@ sindri-pixel/
 
 When Tauri isn't available, `src/lib/platform.ts` transparently substitutes canvas-based encoders and browser file pickers so the same UI keeps working on the web.
 
-**Two frontends, one pipeline.** `src/lib/pixelReconstruction/` is pure TypeScript with no DOM or Tauri dependencies, so it powers both the desktop editor's *Import AI Art* dialog and the standalone web downscaler. The shared knob vocabulary (grid/palette choices, the *Clean sprite* and *High detail* presets, and the mapping from those choices to pipeline options) lives in `pixelReconstruction/uiOptions.ts` so the two front-ends can't drift apart.
+**Two frontends, one pipeline.** `src/lib/pixelReconstruction/` is pure TypeScript with no DOM or Tauri dependencies, so it powers both the desktop editor's *Import AI Art* dialog and the standalone web downscaler. The shared knob vocabulary (grid/palette/pixel-size choices, the *Clean sprite* and *High detail* presets, the mapping from those choices to pipeline options, and the wording of low-confidence notices) lives in `pixelReconstruction/uiOptions.ts` so the two front-ends can't drift apart.
 
 Project writes use a temporary file and atomic replacement so an interrupted save does not truncate the existing project. The Rust export boundary validates dimensions, scaling, frame counts, and pixel-buffer lengths before allocating or encoding output.
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectGrid, gridFromTarget, analyzeAxis } from './gridDetection';
+import { detectGrid, gridFromCellSize, gridFromTarget, analyzeAxis } from './gridDetection';
 import { MIN_CELL_SIZE, MAX_CELL_SIZE } from './types';
 import laundrySignals from './__fixtures__/laundryGolemSignals.json';
 import { sampleCells, sampleCellsAverage } from './cellSampling';
@@ -83,6 +83,94 @@ function realisticLogical(gw: number, gh: number, seed: number, coherence = 0): 
   }
   return grid;
 }
+
+/**
+ * A large AI-style "pixel art" scene with small, soft logical pixels: `cell`
+ * source px per pixel, grid lines jittered by up to ±1px, every edge blurred
+ * (a 3×3 tent filter, i.e. anti-aliased), a little fixed-pattern noise, and
+ * the whole grid shifted right/down by `shift` px. Logical art is blobby
+ * (neighbors often repeat) with fine detail, like a game scene. Returns the
+ * image plus the logical grid it was rendered from.
+ */
+function softScene(gw: number, gh: number, cell: number, seed: number, shift = 0): { image: RGBAImage; logical: RGBA[][] } {
+  let s = seed >>> 0;
+  const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+  const pal: RGBA[] = [
+    { r: 70, g: 140, b: 60, a: 255 }, { r: 90, g: 165, b: 75, a: 255 }, { r: 150, g: 110, b: 70, a: 255 },
+    RED, { r: 230, g: 200, b: 80, a: 255 }, BLUE, { r: 240, g: 240, b: 230, a: 255 }, { r: 40, g: 40, b: 50, a: 255 },
+  ];
+  const logical: RGBA[][] = [];
+  for (let y = 0; y < gh; y++) {
+    const row: RGBA[] = [];
+    for (let x = 0; x < gw; x++) {
+      const r = rnd();
+      if (x > 0 && r < 0.35) row.push(row[x - 1]);
+      else if (y > 0 && r < 0.6) row.push(logical[y - 1][x]);
+      else row.push(pal[Math.floor(rnd() * pal.length)]);
+    }
+    logical.push(row);
+  }
+  const bounds = (n: number) => {
+    const b = [0];
+    for (let i = 1; i < n; i++) b.push(shift + Math.round(i * cell + (rnd() - 0.5) * 1.2));
+    b.push(n * cell + shift);
+    return b;
+  };
+  const xb = bounds(gw);
+  const yb = bounds(gh);
+  const W = xb[gw];
+  const H = yb[gh];
+  const hard = new Uint8ClampedArray(W * H * 3);
+  for (let gy = 0; gy < gh; gy++) {
+    for (let gx = 0; gx < gw; gx++) {
+      const c = logical[gy][gx];
+      for (let y = yb[gy]; y < yb[gy + 1]; y++) {
+        for (let x = xb[gx]; x < xb[gx + 1]; x++) {
+          const o = (y * W + x) * 3;
+          hard[o] = c.r; hard[o + 1] = c.g; hard[o + 2] = c.b;
+        }
+      }
+    }
+  }
+  const image = makeImage(W, H);
+  const at = (x: number, y: number, k: number) =>
+    hard[(Math.min(H - 1, Math.max(0, y)) * W + Math.min(W - 1, Math.max(0, x))) * 3 + k];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      for (let k = 0; k < 3; k++) {
+        let v = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) v += at(x + dx, y + dy, k) * (dx ? 1 : 2) * (dy ? 1 : 2);
+        image.data[(y * W + x) * 4 + k] = v / 16 + ((x * 7 + y * 13) % 5) - 2;
+      }
+      image.data[(y * W + x) * 4 + 3] = 255;
+    }
+  }
+  return { image, logical };
+}
+
+/** Fraction of logical pixels reproduced within `tol` (max channel delta). */
+function matchRate(result: RGBAImage, logical: RGBA[][], dx = 0, dy = 0, tol = 40): number {
+  let hit = 0;
+  let total = 0;
+  for (let y = 0; y < logical.length; y++) {
+    for (let x = 0; x < logical[0].length; x++) {
+      if (x + dx >= result.width || y + dy >= result.height) continue;
+      const a = get(result, x + dx, y + dy);
+      const b = logical[y][x];
+      total++;
+      if (Math.max(Math.abs(a.r - b.r), Math.abs(a.g - b.g), Math.abs(a.b - b.b)) <= tol) hit++;
+    }
+  }
+  return hit / total;
+}
+
+const RAW: PixelArtOptions = {
+  ...DEFAULT_OPTIONS,
+  paletteSize: 100000,
+  mergeSimilarColors: false,
+  removeAntiAliasing: false,
+  removeIsolatedPixels: false,
+};
 
 // ── Grid detection ──────────────────────────────────────────────────────────
 
@@ -284,7 +372,7 @@ describe('grid detection — texture robustness', () => {
     expect(det.gridHeight).toBe(16);
   });
 
-  it('caps an oversized low-confidence detection to a usable sprite size', () => {
+  it('caps an oversized low-confidence detection — and reports that it did', () => {
     // A large, detailed image with smooth low-frequency content and fine noise
     // but *no* real grid — like the laundry image, coarsening never sharply
     // increases within-cell variance, so grid clarity stays low. Detection must
@@ -303,10 +391,78 @@ describe('grid detection — texture robustness', () => {
     const det = detectGrid(img);
     // Not trusted as a clean grid…
     expect(det.confidence).not.toBe('high');
+    expect(det.confidence).toBe('low');
     // …and capped to a sensible sprite resolution (SOFT_MAX_GRID = 128).
     expect(Math.max(det.gridWidth, det.gridHeight)).toBeLessThanOrEqual(128);
     // Aspect ratio is preserved through the cap.
     expect(det.gridWidth / det.gridHeight).toBeCloseTo(W / H, 1);
+    // The cap is not silent: it is flagged, and the pre-cap estimate is kept
+    // so the UI can say what it would have produced.
+    expect(det.capped).toBe(true);
+    expect(det.detectedCellSize).toBeLessThan(det.cellSize);
+  });
+
+  it('does not flag an uncapped detection', () => {
+    const det = detectGrid(upscale(logical8x8(), 16));
+    expect(det.capped).toBe(false);
+    expect(det.detectedCellSize).toBe(det.cellSize);
+  });
+});
+
+// ── Large scenes with small, soft pixels (regression) ───────────────────────
+// A 1536×1024 AI "pixel art" castle scene with ~3px anti-aliased pixels came
+// out 128×85: the finer grid was found but, being low-confidence, silently
+// rescaled to SOFT_MAX_GRID — a 4× multiple of the real cell that erased
+// 3px-wide lines. These pin down the pixel-size override and the no-silent-cap
+// behavior on a procedural stand-in (900×600 → 300×200 logical).
+
+describe('large scenes with small, soft pixels', () => {
+  const GW = 300;
+  const GH = 200;
+  const { image, logical } = softScene(GW, GH, 3, 42);
+
+  it('rebuilds the true grid from an explicit pixel size', () => {
+    const det = gridFromCellSize(image, 3);
+    expect(det.gridWidth).toBe(GW);
+    expect(det.gridHeight).toBe(GH);
+    expect(det.capped).toBe(false);
+
+    const { result } = reconstructPixelArt(image, { ...RAW, autoDetectGrid: false, cellSize: 3 });
+    expect(result.width).toBe(GW);
+    expect(matchRate(result, logical)).toBeGreaterThan(0.85); // ~0.92; misses are jittered edges
+  });
+
+  it('phase-aligns the pixel-size grid when the art does not start at the origin', () => {
+    // Shift the whole grid 2px. Evenly dividing from (0,0) would straddle
+    // every pixel; the phase search puts grid lines back on the real edges.
+    const shifted = softScene(GW, GH, 3, 42, 2);
+    const det = gridFromCellSize(shifted.image, 3);
+    // A leading 2px partial cell becomes output column 0.
+    expect(Math.round(det.offsetX) % 3).toBe(2);
+    expect(Math.round(det.offsetY) % 3).toBe(2);
+    const { result } = reconstructPixelArt(shifted.image, { ...RAW, autoDetectGrid: false, cellSize: 3 });
+    expect(matchRate(result, shifted.logical, 1, 1)).toBeGreaterThan(0.85);
+
+    // Same image, same size, no phase: markedly worse.
+    const unaligned = reconstructPixelArt(shifted.image, { ...RAW, autoDetectGrid: false, targetWidth: GW + 1, targetHeight: GH + 1 });
+    expect(matchRate(unaligned.result, shifted.logical, 1, 1)).toBeLessThan(0.85); // ~0.78
+  });
+
+  it('auto-detects the soft 3px cell (knee) instead of a coarse multiple', () => {
+    const det = detectGrid(image);
+    expect(det.cellSize).toBeCloseTo(3, 1);
+    expect(det.gridWidth).toBe(GW);
+    expect(det.gridHeight).toBe(GH);
+    expect(det.capped).toBe(false);
+    expect(det.confidence).not.toBe('low');
+  });
+
+  it('caps an explicit pixel size at the output limit, flagged, aspect kept', () => {
+    const det = gridFromCellSize(image, 1); // 900×600 would exceed 512
+    expect(det.capped).toBe(true);
+    expect(det.gridWidth).toBe(512);
+    expect(det.gridHeight).toBe(341);
+    expect(det.detectedCellSize).toBe(1);
   });
 });
 

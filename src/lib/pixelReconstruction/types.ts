@@ -35,6 +35,15 @@ export interface GridDetectionResult {
   cellHeight: number;
   offsetX: number;
   offsetY: number;
+  /**
+   * True when the output grid is coarser than the cell size that was detected
+   * or requested — either because a low-confidence detection was held to a
+   * modest size, or because the grid would exceed `MAX_OUTPUT_SIZE`. Front-ends
+   * must surface this rather than present the coarse result as the answer.
+   */
+  capped: boolean;
+  /** Cell size found (or requested) before any cap; equals `cellSize` when not capped. */
+  detectedCellSize: number;
 }
 
 /**
@@ -48,11 +57,17 @@ export interface GridDetectionResult {
 export type SamplingMode = 'mode' | 'average';
 
 export interface PixelArtOptions {
+  /**
+   * Size of one logical pixel in source pixels (e.g. 3). Used when
+   * `autoDetectGrid` is false; takes precedence over the target dimensions.
+   * The grid is still phase-aligned to the image's edges.
+   */
+  cellSize?: number;
   /** Explicit output width. Used when `autoDetectGrid` is false. */
   targetWidth?: number;
   /** Explicit output height. Used when `autoDetectGrid` is false. */
   targetHeight?: number;
-  /** When true, ignore target dimensions and detect the grid automatically. */
+  /** When true, ignore cell size / target dimensions and detect the grid automatically. */
   autoDetectGrid: boolean;
   /** Per-cell reduction strategy. Defaults to `mode` when omitted. */
   samplingMode?: SamplingMode;

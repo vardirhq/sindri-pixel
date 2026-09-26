@@ -10,7 +10,7 @@
 import { sampleCells, sampleCellsAverage } from './cellSampling';
 import { mergeSimilarColors, removeIsolatedPixels } from './cleanup';
 import { toHex } from './color';
-import { detectGrid, gridFromTarget } from './gridDetection';
+import { detectGrid, gridFromCellSize, gridFromTarget } from './gridDetection';
 import { autoPaletteSize, countDistinctColors, quantize } from './paletteQuantize';
 import type { GridDetectionResult, PixelArtOptions, RGBAImage } from './types';
 
@@ -37,11 +37,16 @@ export function reconstructPixelArt(
   source: RGBAImage,
   options: PixelArtOptions,
 ): ReconstructionResult {
-  // 1. Grid detection (or explicit override).
-  const detection =
-    !options.autoDetectGrid && options.targetWidth && options.targetHeight
-      ? gridFromTarget(source, options.targetWidth, options.targetHeight)
-      : detectGrid(source);
+  // 1. Grid detection, or an explicit override: a known pixel size (still
+  //    phase-aligned) or an explicit output size.
+  let detection: GridDetectionResult;
+  if (!options.autoDetectGrid && options.cellSize && options.cellSize > 0) {
+    detection = gridFromCellSize(source, options.cellSize);
+  } else if (!options.autoDetectGrid && options.targetWidth && options.targetHeight) {
+    detection = gridFromTarget(source, options.targetWidth, options.targetHeight);
+  } else {
+    detection = detectGrid(source);
+  }
 
   // 2. Cell sampling → native-resolution sprite. `mode` flattens each cell to
   //    its dominant color (clean pixel art); `average` keeps per-cell detail

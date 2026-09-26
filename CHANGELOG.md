@@ -5,6 +5,12 @@
 ### Added
 
 - Added a **standalone AI Pixel-Art Downscaler web app** (`web/`), published as a static GitHub Pages site at <https://pixel.vardir.no>. It runs the same reconstruction pipeline as the editor's Import AI Art dialog — grid detection, per-cell sampling, palette quantization, cleanup — with drag-drop, clipboard paste, side-by-side previews, a palette readout, and PNG export at 1×–16× nearest-neighbor scale. The layout fills the viewport like an application: a thin masthead, a controls sidebar, preview canvases that take all remaining height and repaint at an integer zoom whenever the window resizes, and a status bar that carries the export controls and a single line pointing at the desktop editor. Nothing is uploaded: the image is decoded and processed entirely in the browser tab, and the build contains no Tauri code. Built with `pnpm build:web` and deployed by the `Pages` workflow on pushes to `main`.
+- Added a **Pixel size** grid option to both AI-art front ends. Enter the size of one art pixel in source pixels (decimals allowed) instead of output dimensions. The grid is phase-aligned to the image's edges, so cells land on real pixel boundaries even when the art doesn't start at the origin.
+
+### Fixed
+
+- **AI-art reconstruction no longer quietly shrinks large scenes to 128 px.** A low-confidence detection over 128 cells is still held to that size, but the result is now flagged (`capped`, with the pre-cap `detectedCellSize`). Both the Import AI Art dialog and the web downscaler explain what happened and offer the detected pixel size as a one-click **Use N px** fix. Low-confidence results that weren't capped also carry a notice. Medium-confidence detections are no longer capped at all, only by the 512 px output limit. That limit now scales both axes together, so a very tall or wide grid keeps its aspect ratio.
+- Grid detection now recognizes **small, soft pixels** (about 3 source px, anti-aliased), which previously read as low confidence or as a coarse multiple of the real size. Cells like that give no variance "dip", because a slightly smaller cell is just as uniform. Instead they show a knee: variance stays flat up to the true size, then jumps. A soft 3px scene that used to come out 128×85 now comes out at its real 512×341.
 
 ## 0.1.0-beta.2
 

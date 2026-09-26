@@ -15,6 +15,11 @@
 // means a genuine pixel grid; a flat curve means a detailed render with no true
 // grid (correctly reported as low confidence). Integral images make the sweep
 // fast.
+//
+// Small, soft cells (2–4px, anti-aliased) are the exception: a cell one size
+// *smaller* than the true one is just as uniform, so the curve has no dip — it
+// runs flat and then kinks upward just past the true size. When the dip test
+// finds nothing, a knee search picks that up instead.
 
 import { luminance } from './color';
 import { axisBoundaries } from './cellSampling';
@@ -26,13 +31,19 @@ import {
   type RGBAImage,
 } from './types';
 
-// When detection is not confident, distrust very fine grids: a sprite this
-// large from a weak signal is almost always texture, so cap the longer side.
+// When detection is low-confidence, distrust very fine grids: a sprite this
+// large from a weak signal is usually texture, so cap the longer side. The
+// result is flagged `capped` so the UI can say so and offer an explicit pixel
+// size — it must never pass as the detected answer.
 const SOFT_MAX_GRID = 128;
 // Variance-dip depth thresholds for confidence (ratio of neighbor variance to
 // the dip). A clean grid resonates strongly (≫1); a detailed render is ~1.
 const DIP_HIGH = 1.5;
 const DIP_MEDIUM = 1.25;
+// Knee thresholds (ratio v[s+1] / v[s]): how sharply variance must jump just
+// past a soft cell, and how far that jump must stand out from its neighbors'.
+const KNEE_MIN = 2;
+const KNEE_PROMINENCE = 1.6;
 
 type Confidence = GridDetectionResult['confidence'];
 
@@ -261,6 +272,19 @@ function axisGridCount(length: number, cell: number, offset: number): number {
   return Math.max(1, axisBoundaries(length, cell, offset).length - 1);
 }
 
+/** Equal-division grid whose longer side is `limit`, preserving aspect ratio. */
+function cappedGrid(
+  image: RGBAImage,
+  gridWidth: number,
+  gridHeight: number,
+  limit: number,
+): Pick<GridDetectionResult, 'gridWidth' | 'gridHeight' | 'cellWidth' | 'cellHeight'> {
+  const scale = limit / Math.max(gridWidth, gridHeight);
+  const w = clampInt(gridWidth * scale, 1, MAX_OUTPUT_SIZE);
+  const h = clampInt(gridHeight * scale, 1, MAX_OUTPUT_SIZE);
+  return { gridWidth: w, gridHeight: h, cellWidth: image.width / w, cellHeight: image.height / h };
+}
+
 /** Build a detection result from an explicit output size (manual override). */
 export function gridFromTarget(
   image: RGBAImage,
@@ -272,13 +296,68 @@ export function gridFromTarget(
   const cellWidth = image.width / gridWidth;
   const cellHeight = image.height / gridHeight;
   const cellSize = (cellWidth + cellHeight) / 2;
-  return { cellSize, gridWidth, gridHeight, confidence: 'high', cellWidth, cellHeight, offsetX: 0, offsetY: 0 };
+  return {
+    cellSize,
+    gridWidth,
+    gridHeight,
+    confidence: 'high',
+    cellWidth,
+    cellHeight,
+    offsetX: 0,
+    offsetY: 0,
+    capped: false,
+    detectedCellSize: cellSize,
+  };
+}
+
+/**
+ * Build a grid from a known logical-pixel size, in source pixels (manual
+ * override for when the user can see the pixels are, say, 3px). The size is
+ * taken as given; only the phase is detected, so grid lines sit on the art's
+ * real pixel edges even when the grid doesn't start at the origin.
+ */
+export function gridFromCellSize(image: RGBAImage, cellSize: number): GridDetectionResult {
+  const { width, height } = image;
+  const cell = Math.max(1, cellSize);
+  const nominalW = Math.max(1, Math.round(width / cell));
+  const nominalH = Math.max(1, Math.round(height / cell));
+  const base = { cellSize: cell, confidence: 'high' as const, detectedCellSize: cell };
+
+  if (Math.max(nominalW, nominalH) > MAX_OUTPUT_SIZE) {
+    const grid = cappedGrid(image, nominalW, nominalH, MAX_OUTPUT_SIZE);
+    return { ...base, ...grid, cellSize: (grid.cellWidth + grid.cellHeight) / 2, offsetX: 0, offsetY: 0, capped: true };
+  }
+
+  const lum = toLuminance(image);
+  const full: Box = { x0: 0, y0: 0, x1: width, y1: height };
+  // A phase shift leaves a partial cell at each edge. If that sliver alone
+  // tips an axis over the output limit, divide that axis evenly instead.
+  const axis = (signal: Float32Array, length: number, nominal: number) => {
+    const offset = bestPhase(signal, cell, 0, length);
+    const count = axisGridCount(length, cell, offset);
+    return count <= MAX_OUTPUT_SIZE
+      ? { count, size: cell, offset }
+      : { count: nominal, size: length / nominal, offset: 0 };
+  };
+  const x = axis(colEdgeSignal(lum, width, full), width, nominalW);
+  const y = axis(rowEdgeSignal(lum, width, full), height, nominalH);
+  return {
+    ...base,
+    gridWidth: x.count,
+    gridHeight: y.count,
+    cellWidth: x.size,
+    cellHeight: y.size,
+    offsetX: x.offset,
+    offsetY: y.offset,
+    capped: false,
+  };
 }
 
 /**
  * Detect the implied grid via the within-cell-variance dip. Sweeps candidate
  * cell sizes, phase-aligns each, and finds where variance collapses (a real
- * grid). Confidence is the dip depth; a low-confidence oversized grid is capped.
+ * grid), falling back to a knee search for soft cells. Confidence is the dip
+ * depth; a low-confidence oversized grid is capped and flagged `capped`.
  */
 export function detectGrid(image: RGBAImage): GridDetectionResult {
   const { width, height } = image;
@@ -333,6 +412,29 @@ export function detectGrid(image: RGBAImage): GridDetectionResult {
 
   let confidence: Confidence = dip >= DIP_HIGH ? 'high' : dip >= DIP_MEDIUM ? 'medium' : 'low';
 
+  // No dip: look for a soft grid's knee instead — the largest cell that is
+  // still uniform, where variance then jumps sharply (and markedly more than
+  // at the neighboring sizes). Starts at MIN_CELL_SIZE + 1: the jump from the
+  // smallest cell is inflated by edge pixels on ordinary art.
+  if (confidence === 'low') {
+    const kneeAt = (s: number): number => v[s + 1] / Math.max(v[s], 1e-6);
+    let knee = 0;
+    let kneeCell = 0;
+    for (let s = MIN_CELL_SIZE + 1; s < maxCell; s++) {
+      if (kneeAt(s) > knee) {
+        knee = kneeAt(s);
+        kneeCell = s;
+      }
+    }
+    if (kneeCell > 0) {
+      const around = Math.max(kneeAt(kneeCell - 1), kneeCell + 1 < maxCell ? kneeAt(kneeCell + 1) : 1);
+      if (knee >= KNEE_MIN && knee >= KNEE_PROMINENCE * around) {
+        cell = kneeCell;
+        confidence = 'medium';
+      }
+    }
+  }
+
   // Per-axis grid + phase. Sprites with a margin keep the detected phase (grid
   // lines don't start at the origin); full-frame art uses exact equal division.
   let cellW = cell;
@@ -343,29 +445,28 @@ export function detectGrid(image: RGBAImage): GridDetectionResult {
   let gridHeight: number;
   if (marginX) {
     offsetX = (((box.x0 + phxArr[cell]) % cell) + cell) % cell;
-    gridWidth = clampInt(axisGridCount(width, cell, offsetX), 1, MAX_OUTPUT_SIZE);
+    gridWidth = axisGridCount(width, cell, offsetX);
   } else {
-    gridWidth = clampInt(width / cell, 1, MAX_OUTPUT_SIZE);
+    gridWidth = Math.max(1, Math.round(width / cell));
     cellW = width / gridWidth;
   }
   if (marginY) {
     offsetY = (((box.y0 + phyArr[cell]) % cell) + cell) % cell;
-    gridHeight = clampInt(axisGridCount(height, cell, offsetY), 1, MAX_OUTPUT_SIZE);
+    gridHeight = axisGridCount(height, cell, offsetY);
   } else {
-    gridHeight = clampInt(height / cell, 1, MAX_OUTPUT_SIZE);
+    gridHeight = Math.max(1, Math.round(height / cell));
     cellH = height / gridHeight;
   }
 
-  // Size-sanity cap: when we don't trust an oversized estimate (or it exceeds
-  // the output limit), fall back to an equal-division grid at a usable size.
-  const oversized = Math.max(gridWidth, gridHeight) > MAX_OUTPUT_SIZE;
-  if (oversized || (confidence !== 'high' && Math.max(gridWidth, gridHeight) > SOFT_MAX_GRID)) {
-    const target = oversized ? MAX_OUTPUT_SIZE : SOFT_MAX_GRID;
-    const scale = target / Math.max(gridWidth, gridHeight);
-    gridWidth = clampInt(gridWidth * scale, 1, MAX_OUTPUT_SIZE);
-    gridHeight = clampInt(gridHeight * scale, 1, MAX_OUTPUT_SIZE);
-    cellW = width / gridWidth;
-    cellH = height / gridHeight;
+  // Size-sanity cap: a grid over the output limit, or a large grid from a
+  // low-confidence estimate, falls back to an equal-division grid at a usable
+  // size. Flagged so the UI can report it instead of passing it off as the
+  // detected grid.
+  const detectedCellSize = (cellW + cellH) / 2;
+  const limit = confidence === 'low' ? SOFT_MAX_GRID : MAX_OUTPUT_SIZE;
+  const capped = Math.max(gridWidth, gridHeight) > limit;
+  if (capped) {
+    ({ gridWidth, gridHeight, cellWidth: cellW, cellHeight: cellH } = cappedGrid(image, gridWidth, gridHeight, limit));
     offsetX = 0;
     offsetY = 0;
   }
@@ -379,5 +480,7 @@ export function detectGrid(image: RGBAImage): GridDetectionResult {
     cellHeight: cellH,
     offsetX,
     offsetY,
+    capped,
+    detectedCellSize,
   };
 }
