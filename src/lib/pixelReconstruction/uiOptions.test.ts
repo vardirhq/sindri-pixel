@@ -9,6 +9,7 @@ const choices = (over: Partial<UiChoices>): UiChoices => ({
   customWidth: 64,
   customHeight: 64,
   transparentBackground: true,
+  removeBackground: true,
   ...over,
 });
 

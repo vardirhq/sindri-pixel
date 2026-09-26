@@ -1,0 +1,659 @@
+/*
+ * AI-art frame workspace (stage, transport, inspector, frame strip).
+ * Shared by the web tool and the editor's Import AI Art dialog, so it uses
+ * only the Sindri design tokens and `aa-`-prefixed classes.
+ */
+
+.aa-workspace {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 236px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  font-family: var(--font-sans);
+  color: var(--ink);
+}
+
+.aa-workspace .label {
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.aa-workspace button {
+  font: inherit;
+}
+
+.aa-workspace input[type='number'] {
+  background: var(--paper);
+  border: 1px solid var(--rule-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 5px 7px;
+  width: 100%;
+  min-width: 0;
+}
+
+.aa-workspace input[type='number']:focus-visible,
+.aa-workspace button:focus-visible,
+.aa-card:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: 1px;
+}
+
+/* ─── stage ──────────────────────────────────────────────── */
+
+.aa-main {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.aa-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at center, var(--paper-2) 0%, var(--paper) 70%);
+}
+
+.aa-stage-canvas {
+  position: relative;
+  flex: none;
+  box-shadow: 0 0 0 1px var(--rule-2), 0 18px 48px rgba(0, 0, 0, 0.45);
+  background-color: var(--paper-2);
+  background-image:
+    linear-gradient(45deg, var(--paper-3) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--paper-3) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--paper-3) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--paper-3) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+.aa-stage-canvas canvas {
+  display: block;
+  image-rendering: pixelated;
+  touch-action: none;
+}
+
+.aa-stage-canvas canvas.grab {
+  cursor: grab;
+}
+
+.aa-stage-canvas canvas.grabbing {
+  cursor: grabbing;
+}
+
+.aa-stage-hud,
+.aa-stage-status,
+.aa-stage-dims {
+  position: absolute;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.aa-stage-hud {
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 9px;
+  background: var(--paper-3);
+  border: 1px solid var(--amber-dim);
+  color: var(--amber);
+}
+
+.aa-stage-status {
+  top: 12px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aa-stage-dims {
+  bottom: 10px;
+  right: 14px;
+  color: var(--ink-4);
+}
+
+.aa-spinner {
+  width: 6px;
+  height: 6px;
+  background: var(--amber);
+  animation: aa-blink 0.9s steps(2, jump-none) infinite;
+}
+
+.aa-dot-error {
+  width: 6px;
+  height: 6px;
+  background: var(--red);
+}
+
+@keyframes aa-blink {
+  from { opacity: 1; }
+  to { opacity: 0.15; }
+}
+
+/* ─── transport ──────────────────────────────────────────── */
+
+.aa-transport {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  border-top: 1px solid var(--rule);
+  background: var(--paper);
+}
+
+.aa-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.aa-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  padding: 0;
+}
+
+.aa-icon-btn:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--rule-2);
+}
+
+.aa-icon-btn.active {
+  color: var(--amber);
+  background: var(--amber-glow);
+  border-color: var(--amber-dim);
+}
+
+.aa-icon-btn.primary {
+  width: 34px;
+  height: 34px;
+  color: var(--paper);
+  background: var(--amber);
+  border-color: var(--amber);
+}
+
+.aa-icon-btn.primary:hover:not(:disabled) {
+  color: var(--paper);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.aa-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.aa-counter,
+.aa-cycle {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-left: 8px;
+  min-width: 52px;
+}
+
+.aa-counter b {
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.aa-cycle {
+  min-width: 0;
+}
+
+.aa-fps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-right: 6px;
+}
+
+.aa-workspace .aa-fps input {
+  width: 48px;
+  text-align: right;
+}
+
+.aa-toggle-pair {
+  display: flex;
+}
+
+.aa-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--rule-2);
+  margin: 0 6px;
+}
+
+.aa-zoom {
+  min-width: 40px;
+  height: 28px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.aa-zoom:hover,
+.aa-zoom.fit {
+  border-color: var(--rule-2);
+}
+
+/* ─── inspector ──────────────────────────────────────────── */
+
+.aa-inspector {
+  grid-column: 2;
+  grid-row: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--rule);
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.aa-inspector section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.aa-insp-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.aa-insp-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.aa-insp-name {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aa-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.aa-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--amber);
+}
+
+.aa-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-4);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.aa-link:hover {
+  color: var(--amber);
+}
+
+.aa-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-4);
+}
+
+.aa-stepper {
+  display: grid;
+  grid-template-columns: 18px 26px 1fr 26px;
+  align-items: stretch;
+}
+
+.aa-stepper .k {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  align-self: center;
+}
+
+.aa-stepper button {
+  background: var(--paper);
+  border: 1px solid var(--rule-2);
+  color: var(--ink-3);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.aa-stepper button:hover {
+  color: var(--ink);
+}
+
+.aa-workspace .aa-stepper input {
+  border-left: none;
+  border-right: none;
+  text-align: center;
+}
+
+.aa-range {
+  width: 100%;
+  accent-color: var(--amber);
+}
+
+.aa-range:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: 3px;
+}
+
+.aa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--rule-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.aa-chip:hover {
+  border-color: var(--ink-4);
+  color: var(--ink);
+}
+
+.aa-chip.active {
+  border-color: var(--amber-dim);
+  background: var(--amber-glow);
+  color: var(--amber);
+}
+
+.aa-suffix {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.aa-readout {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+  gap: 3px !important;
+}
+
+.aa-readout div {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.aa-readout .k {
+  color: var(--ink-4);
+}
+
+/* ─── frame strip ────────────────────────────────────────── */
+
+.aa-timeline {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  border-top: 1px solid var(--rule);
+  background: var(--paper);
+  min-width: 0;
+}
+
+.aa-strip {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-2) transparent;
+}
+
+.aa-card {
+  flex: none;
+  width: 78px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid var(--rule-2);
+  background: var(--paper-2);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+
+.aa-card:hover {
+  border-color: var(--ink-4);
+}
+
+.aa-card.selected {
+  border-color: var(--amber);
+  background: var(--paper-3);
+  box-shadow: 0 0 0 3px var(--amber-glow);
+}
+
+.aa-card.live::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--amber);
+}
+
+.aa-card.dragging {
+  opacity: 0.35;
+}
+
+.aa-card.insert-before::before,
+.aa-card.insert-after::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--amber);
+  box-shadow: 0 0 8px var(--amber);
+}
+
+.aa-card.insert-before::before {
+  left: -6px;
+}
+
+.aa-card.insert-after::before {
+  right: -6px;
+}
+
+.aa-thumb {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(45deg, var(--paper-2) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--paper-2) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--paper-2) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--paper-2) 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+
+.aa-thumb canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+
+.aa-thumb-pending {
+  width: 6px;
+  height: 6px;
+  background: var(--ink-4);
+  animation: aa-blink 0.9s steps(2, jump-none) infinite;
+}
+
+.aa-card-meta {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-4);
+}
+
+.aa-card.selected .num {
+  color: var(--amber);
+}
+
+.aa-card-meta .dur.custom {
+  color: var(--ink-2);
+}
+
+.aa-card-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.aa-card:hover .aa-card-actions,
+.aa-card:focus-within .aa-card-actions {
+  opacity: 1;
+}
+
+.aa-card-actions button {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--paper-3);
+  border: 1px solid var(--rule-2);
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.aa-card-actions button:hover {
+  color: var(--ink);
+  border-color: var(--ink-4);
+}
+
+.aa-add {
+  flex: none;
+  width: 78px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed var(--rule-2);
+  background: transparent;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.aa-add:hover {
+  border-color: var(--amber-dim);
+  color: var(--amber);
+}
+
+.icon {
+  display: block;
+  flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aa-spinner,
+  .aa-thumb-pending {
+    animation: none;
+  }
+  .aa-card,
+  .aa-card-actions {
+    transition: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .aa-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+  .aa-main {
+    min-height: 60vh;
+  }
+  .aa-inspector {
+    grid-column: 1;
+    grid-row: 2;
+    border-left: none;
+    border-top: 1px solid var(--rule);
+  }
+  .aa-timeline {
+    grid-row: 3;
+  }
+}

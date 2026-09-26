@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { detectGrid, gridFromCellSize, gridFromTarget, analyzeAxis } from './gridDetection';
+import { detectGrid, findPlateauEnd, gridFromCellSize, gridFromTarget, analyzeAxis } from './gridDetection';
 import { MIN_CELL_SIZE, MAX_CELL_SIZE } from './types';
 import laundrySignals from './__fixtures__/laundryGolemSignals.json';
 import { sampleCells, sampleCellsAverage } from './cellSampling';
 import { quantize, countDistinctColors, autoPaletteSize } from './paletteQuantize';
-import { removeIsolatedPixels, mergeSimilarColors } from './cleanup';
-import { reconstructPixelArt, imageToPackedPixels, extractPalette } from './reconstruct';
+import { removeIsolatedPixels, mergeSimilarColors, removeSolidBackground } from './cleanup';
+import { reconstructPixelArt, reconstructSequence, imageToPackedPixels, extractPalette } from './reconstruct';
 import { DEFAULT_OPTIONS, type PixelArtOptions, type RGBA } from './types';
 import {
   BLUE,
@@ -414,6 +414,116 @@ describe('fitted grids', () => {
     const det = detectGrid(out);
     expect(det.cellSize).toBeCloseTo(10, 0);
     expect(det.confidence).toBe('high');
+  });
+});
+
+// ── Knee selection on measured curves (regression) ─────────────────────────
+// Residual-variance curves recorded from a real ~15px AI sprite (1300×1450),
+// once on transparency and once composited onto white. On white the
+// anti-aliased fringe blurs the kink over a few sizes; looking only one or two
+// sizes ahead missed it, and detection fell back to a 2.8px guess (459×512).
+
+const curve = (values: number[]) => [0, 0, ...values]; // index = cell size, from 2
+const SPRITE_TRANSPARENT = curve([0.002, 0.006, 0.008, 0.010, 0.012, 0.015, 0.017, 0.018, 0.020, 0.026, 0.031, 0.028, 0.029, 0.030, 0.031, 0.033, 0.034, 0.037, 0.041, 0.041, 0.056, 0.081, 0.094, 0.097, 0.103, 0.108, 0.112, 0.114, 0.116, 0.116]);
+const SPRITE_ON_WHITE = curve([0.002, 0.007, 0.011, 0.013, 0.016, 0.020, 0.023, 0.024, 0.026, 0.032, 0.040, 0.038, 0.040, 0.042, 0.044, 0.045, 0.046, 0.050, 0.053, 0.055, 0.071, 0.098, 0.114, 0.118, 0.128, 0.132, 0.137, 0.137, 0.144, 0.149]);
+// A detailed render with no grid: the curve just rises smoothly.
+const GRIDLESS = curve([0.171, 0.204, 0.215, 0.220, 0.222, 0.225, 0.225, 0.226, 0.227, 0.228, 0.228, 0.229, 0.230, 0.230, 0.231, 0.232, 0.232, 0.233, 0.233, 0.233, 0.234, 0.235, 0.236, 0.236, 0.237]);
+
+describe('knee selection', () => {
+  it('finds the plateau end of a real sprite, on transparency and on white', () => {
+    for (const u of [SPRITE_TRANSPARENT, SPRITE_ON_WHITE]) {
+      const { plateauEnd } = findPlateauEnd(u, u.length - 1);
+      // Past the ~15px cell (the ±25% line fit keeps it uniform a little
+      // beyond); the settle step then reads 15px from the line spacing.
+      expect(plateauEnd).toBeGreaterThanOrEqual(19);
+      expect(plateauEnd).toBeLessThanOrEqual(22);
+    }
+  });
+
+  it('finds no plateau in a gridless render', () => {
+    expect(findPlateauEnd(GRIDLESS, GRIDLESS.length - 1).plateauEnd).toBe(0);
+  });
+});
+
+// ── Backgrounds and multi-frame sequences ──────────────────────────────────
+
+describe('solid background removal', () => {
+  const WHITE: RGBA = { r: 250, g: 250, b: 248, a: 255 };
+  function onWhite(): ReturnType<typeof makeImage> {
+    const img = makeImage(40, 40);
+    for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) put(img, x, y, WHITE);
+    // A blue ring enclosing a white "eye", plus a red block touching the edge.
+    for (let y = 10; y < 30; y++) for (let x = 10; x < 30; x++) put(img, x, y, BLUE);
+    for (let y = 16; y < 24; y++) for (let x = 16; x < 24; x++) put(img, x, y, WHITE);
+    for (let y = 30; y < 40; y++) for (let x = 18; x < 22; x++) put(img, x, y, RED);
+    return img;
+  }
+
+  it('clears a flat backdrop from the edges in', () => {
+    const out = removeSolidBackground(onWhite());
+    expect(get(out, 0, 0).a).toBe(0);
+    expect(get(out, 39, 20).a).toBe(0);
+    expect(get(out, 12, 12)).toEqual(BLUE);
+    expect(get(out, 20, 39)).toEqual(RED); // touches the edge, different color
+  });
+
+  it('keeps enclosed regions of the backdrop color', () => {
+    expect(get(removeSolidBackground(onWhite()), 20, 20)).toEqual(WHITE);
+  });
+
+  it('leaves scenes, transparent sprites and flat images alone', () => {
+    const scene = softScene(40, 30, 3, 1).image;
+    expect(removeSolidBackground(scene)).toBe(scene);
+    const sprite = upscale([[null, RED], [BLUE, null]], 8);
+    expect(removeSolidBackground(sprite)).toBe(sprite);
+    const flat = makeImage(20, 20);
+    for (let y = 0; y < 20; y++) for (let x = 0; x < 20; x++) put(flat, x, y, WHITE);
+    expect(removeSolidBackground(flat)).toBe(flat);
+  });
+
+  it('is an opt-in pipeline option', () => {
+    const img = onWhite();
+    const opts = { ...RAW, autoDetectGrid: false, targetWidth: 20, targetHeight: 20 };
+    expect(get(reconstructPixelArt(img, opts).result, 0, 0).a).toBe(255);
+    expect(get(reconstructPixelArt(img, { ...opts, removeBackground: true }).result, 0, 0).a).toBe(0);
+  });
+});
+
+describe('reconstructSequence', () => {
+  // Two frames of the "same" sprite whose AI render shifted the red a little.
+  const RED_2: RGBA = { r: 225, g: 42, b: 40, a: 255 };
+  const frameWith = (red: RGBA) =>
+    upscale(Array.from({ length: 8 }, (_, y) => Array.from({ length: 8 }, (_, x) => ((x + y) % 3 ? red : BLUE))), 8);
+  const opts: PixelArtOptions = { ...DEFAULT_OPTIONS, autoDetectGrid: false, targetWidth: 8, targetHeight: 8 };
+
+  it('maps colors the same way in every frame', () => {
+    const a = frameWith(RED);
+    const b = frameWith(RED_2);
+    // Separately, each frame keeps its own red — the animation would flicker.
+    const apart = [reconstructPixelArt(a, opts).result, reconstructPixelArt(b, opts).result];
+    expect(get(apart[0], 1, 0)).not.toEqual(get(apart[1], 1, 0));
+    // Together, both frames land on one shared red.
+    const [ra, rb] = reconstructSequence([{ source: a }, { source: b }], opts).map((r) => r.result);
+    expect(get(ra, 1, 0)).toEqual(get(rb, 1, 0));
+    expect(get(ra, 0, 0)).toEqual(get(rb, 0, 0));
+  });
+
+  it('keeps each frame on its own grid, and honors a precomputed one', () => {
+    const small = upscale(logical8x8(), 8);
+    const big = upscale(logical8x8(), 16);
+    const [ra, rb] = reconstructSequence(
+      [{ source: small }, { source: big, grid: gridFromTarget(big, 4, 4) }],
+      { ...DEFAULT_OPTIONS },
+    );
+    expect([ra.result.width, ra.result.height]).toEqual([8, 8]);
+    expect([rb.result.width, rb.result.height]).toEqual([4, 4]);
+  });
+
+  it('is exactly reconstructPixelArt for one frame', () => {
+    const img = softScene(40, 30, 3, 7).image;
+    expect(reconstructSequence([{ source: img }], DEFAULT_OPTIONS)[0].result.data).toEqual(
+      reconstructPixelArt(img, DEFAULT_OPTIONS).result.data,
+    );
   });
 });
 

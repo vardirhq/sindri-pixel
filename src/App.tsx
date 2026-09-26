@@ -1225,14 +1225,20 @@ function App() {
     }
   };
 
-  // Turn a reconstructed AI-art result into a new single-frame document.
+  // Turn a reconstructed AI-art result (one frame, or an animation) into a
+  // new document.
   const importAiArt = useCallback((res: AiArtImportResult) => {
-    const { image, palette, name } = res;
-    const packed = imageToPackedPixels(image);
-    const frame = frameFromPackedPixels(image.width, image.height, packed);
-    applyProject([frame], image.width, image.height, name, palette.length ? palette : undefined);
+    const { frames: imported, palette, name } = res;
+    const { width, height } = imported[0].image;
+    const newFrames = imported.map(({ image, duration }, i) => ({
+      ...frameFromPackedPixels(width, height, imageToPackedPixels(image)),
+      id: `frame_${i}`,
+      duration,
+    }));
+    applyProject(newFrames, width, height, name, palette.length ? palette : undefined);
     setCurrentFilePath(null);
-    pushRecent({ name, path: '', spec: `${image.width} × ${image.height} · 1 frame`, timestamp: Date.now() });
+    const count = newFrames.length;
+    pushRecent({ name, path: '', spec: `${width} × ${height} · ${count} frame${count === 1 ? '' : 's'}`, timestamp: Date.now() });
     setRecentFiles(getRecents());
     setAiImportOpen(false);
     enterEditor();

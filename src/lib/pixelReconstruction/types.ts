@@ -87,6 +87,11 @@ export interface PixelArtOptions {
   removeAntiAliasing: boolean;
   removeIsolatedPixels: boolean;
   /**
+   * When true, a solid backdrop (most of the border one flat color) is made
+   * transparent by flood-filling from the edges. Off by default.
+   */
+  removeBackground?: boolean;
+  /**
    * When true, cells whose representative pixel is mostly transparent become
    * fully transparent instead of adopting a stray semi-transparent color.
    */
