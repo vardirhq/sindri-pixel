@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- Playing an animation on a phone no longer drags the page down to the frame strip on every frame, which made it impossible to scroll back up to the stage. The strip now scrolls only itself, sideways. On desktop the tool is also pinned to the window, so nothing can scroll the page away from the stage.
 - Grid detection no longer misses the pixel size of sprites on a **white background**. The anti-aliased fringe against white spreads the telltale jump in cell variance over a few sizes, and looking only one or two sizes ahead missed it. A real ~15px sprite on white was read as 2.8px (459×512) and is now read correctly at 15px. It is covered by a test on curves measured from that image.
 - The Import AI Art dialog's previews now scale large images down to fit, where they used to be cropped, and no longer overflow the dialog.
 - **AI-art reconstruction no longer quietly shrinks large scenes to 128 px.** A low-confidence detection over 128 cells is still held to that size, but the result is now flagged (`capped`, with the pre-cap `detectedCellSize`). Both the Import AI Art dialog and the web downscaler explain what happened and offer the detected pixel size as a one-click **Use N px** fix. Low-confidence results that weren't capped also carry a notice. Medium-confidence detections are no longer capped at all, only by the 512 px output limit. That limit now scales both axes together, so a very tall or wide grid keeps its aspect ratio.
