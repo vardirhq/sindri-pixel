@@ -53,8 +53,10 @@ Frontend (`src/`):
   legacy-file migration and strict validation). Has tests.
 - `lib/sprite.ts` — sprite model, layer compositing, sprite-sheet layout. Has tests.
 - `lib/pixelReconstruction/` — reconstructs AI-generated rasters into true
-  low-res sprites; `gridDetection.ts` is the core (within-cell-variance grid
-  detection). Has tests + fixtures.
+  low-res sprites; `gridDetection.ts` is the core: it fits grid lines
+  to the art's edges (so they follow drift and phase) and picks the cell size
+  where the fitted grid's within-cell variance jumps. Has tests; synthetic
+  image builders live in `__fixtures__/synthetic.ts`.
 - `lib/platform.ts` — Tauri detection and web fallbacks (download/file-pick).
 - `lib/storage.ts` — persistence helpers.
 

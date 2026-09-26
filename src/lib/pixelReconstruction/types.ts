@@ -30,7 +30,10 @@ export interface GridDetectionResult {
   gridWidth: number;
   gridHeight: number;
   confidence: 'high' | 'medium' | 'low';
-  /** Per-axis cell size and grid-line offset (phase) for aligned resampling. */
+  /**
+   * Per-axis mean cell size and the offset (phase) of the first grid line.
+   * Define the grid when `xBounds`/`yBounds` are absent; a summary otherwise.
+   */
   cellWidth: number;
   cellHeight: number;
   offsetX: number;
@@ -44,6 +47,13 @@ export interface GridDetectionResult {
   capped: boolean;
   /** Cell size found (or requested) before any cap; equals `cellSize` when not capped. */
   detectedCellSize: number;
+  /**
+   * Fitted grid-line positions per axis, `[0, …, width]` / `[0, …, height]`:
+   * one entry per cell edge, following the art's own (possibly uneven,
+   * drifting) pixel edges. When present they define the grid exactly.
+   */
+  xBounds?: number[];
+  yBounds?: number[];
 }
 
 /**

@@ -76,6 +76,9 @@ export interface GridSpec {
   cellHeight: number;
   offsetX: number;
   offsetY: number;
+  /** Explicit cell edges per axis (`[0, …, length]`); take precedence when set. */
+  xBounds?: number[];
+  yBounds?: number[];
 }
 
 /** Boundary positions for a phased grid: lines at `offset + k·cell`, spanning [0, length]. */
@@ -95,9 +98,18 @@ function equalBoundaries(length: number, count: number): number[] {
   return b;
 }
 
+/** Cell edges per axis: explicit fitted bounds, a phased lattice, or equal division. */
+function gridBounds(source: RGBAImage, gridWidth: number, gridHeight: number, grid?: GridSpec): [number[], number[]] {
+  if (!grid) return [equalBoundaries(source.width, gridWidth), equalBoundaries(source.height, gridHeight)];
+  return [
+    grid.xBounds ?? axisBoundaries(source.width, grid.cellWidth, grid.offsetX),
+    grid.yBounds ?? axisBoundaries(source.height, grid.cellHeight, grid.offsetY),
+  ];
+}
+
 /**
  * Resample `source` down to a low-resolution sprite by taking the mode color of
- * each logical cell. With `grid` the cells follow the detected phased lattice;
+ * each logical cell. With `grid` the cells follow the detected (fitted) grid;
  * without it the image is divided equally into `gridWidth × gridHeight` cells.
  */
 export function sampleCells(
@@ -107,8 +119,7 @@ export function sampleCells(
   transparentBackground: boolean,
   grid?: GridSpec,
 ): RGBAImage {
-  const xb = grid ? axisBoundaries(source.width, grid.cellWidth, grid.offsetX) : equalBoundaries(source.width, gridWidth);
-  const yb = grid ? axisBoundaries(source.height, grid.cellHeight, grid.offsetY) : equalBoundaries(source.height, gridHeight);
+  const [xb, yb] = gridBounds(source, gridWidth, gridHeight, grid);
   const gw = xb.length - 1;
   const gh = yb.length - 1;
   const out = createImage(gw, gh);
@@ -139,8 +150,7 @@ export function sampleCellsAverage(
   transparentBackground: boolean,
   grid?: GridSpec,
 ): RGBAImage {
-  const xb = grid ? axisBoundaries(source.width, grid.cellWidth, grid.offsetX) : equalBoundaries(source.width, gridWidth);
-  const yb = grid ? axisBoundaries(source.height, grid.cellHeight, grid.offsetY) : equalBoundaries(source.height, gridHeight);
+  const [xb, yb] = gridBounds(source, gridWidth, gridHeight, grid);
   const gw = xb.length - 1;
   const gh = yb.length - 1;
   const out = createImage(gw, gh);
