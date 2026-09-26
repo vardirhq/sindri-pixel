@@ -2,12 +2,12 @@
 // Public entry point: reconstructPixelArt() plus the helpers the import UI
 // needs to turn a result into an editor document.
 
-export { reconstructPixelArt, imageToPackedPixels, extractPalette } from './reconstruct';
-export type { ReconstructionResult } from './reconstruct';
+export { reconstructPixelArt, reconstructSequence, resolveGrid, imageToPackedPixels, extractPalette } from './reconstruct';
+export type { ReconstructionResult, SequenceFrame } from './reconstruct';
 export { detectGrid, gridFromTarget, gridFromCellSize } from './gridDetection';
 export { sampleCells, sampleCellsAverage } from './cellSampling';
 export { quantize, countDistinctColors, autoPaletteSize } from './paletteQuantize';
-export { removeIsolatedPixels, mergeSimilarColors } from './cleanup';
+export { removeIsolatedPixels, mergeSimilarColors, removeSolidBackground } from './cleanup';
 export { DEFAULT_OPTIONS, MAX_OUTPUT_SIZE } from './types';
 export {
   GRID_PRESETS,

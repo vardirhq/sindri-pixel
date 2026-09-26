@@ -1,5 +1,6 @@
 /*
- * Standalone downscaler — app chrome.
+ * Standalone AI pixel-art tool — app chrome (the animation workspace brings
+ * its own styles from src/components/aiArt/aiArt.css).
  * Colors and type come from the shared Sindri tokens. The tool fills the
  * viewport like an application rather than scrolling like a page: a thin
  * masthead, a work area that takes all remaining height, and a status bar.
@@ -90,6 +91,60 @@ a {
   flex: none;
 }
 
+/* mode tabs */
+
+.modes {
+  display: flex;
+  align-self: stretch;
+  margin: -12px 0;
+}
+
+.modes button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  background: none;
+  border: none;
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.modes button:hover {
+  color: var(--ink);
+}
+
+.modes button.active {
+  color: var(--ink);
+}
+
+.modes button.active::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--amber);
+}
+
+.modes .count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--paper);
+  background: var(--amber);
+  padding: 0 5px;
+  line-height: 15px;
+}
+
+.modes button:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: -4px;
+}
+
 /* ─── generic controls ───────────────────────────────────── */
 
 .btn {
@@ -120,6 +175,17 @@ a {
   background: var(--ink-2);
   border-color: var(--ink-2);
   color: var(--paper);
+}
+
+.btn .icon {
+  display: inline-block;
+  vertical-align: -1px;
+  margin-right: 6px;
+}
+
+.btn-quiet {
+  border-color: transparent;
+  color: var(--ink-3);
 }
 
 .btn:disabled {
@@ -161,7 +227,7 @@ input[type='number'] {
   display: flex;
 }
 
-.seg > div {
+.seg > button {
   flex: 1;
   text-align: center;
   padding: 5px 4px;
@@ -172,15 +238,37 @@ input[type='number'] {
   color: var(--ink-3);
   border: 1px solid var(--rule-2);
   border-left: none;
+  line-height: 1.4;
 }
 
-.seg > div:first-child {
+.seg > button:first-child {
   border-left: 1px solid var(--rule-2);
 }
 
-.seg > div.active {
+.seg > button:hover {
+  color: var(--ink-2);
+}
+
+.seg > button.active {
   background: var(--paper-3);
   color: var(--ink);
+}
+
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.sidebar .hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-4);
 }
 
 .preset-row {
@@ -247,6 +335,34 @@ input[type='number'] {
   font-size: 11px;
   color: var(--ink-4);
   max-width: 52ch;
+}
+
+.drop-art {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.drop-art span {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--rule-2);
+  background: var(--paper-3);
+}
+
+.drop-art span:nth-child(2) {
+  background: var(--amber-glow-2);
+  border-color: var(--amber-dim);
+  transform: translateY(-6px);
+}
+
+.dropzone.active .drop-art span {
+  border-color: var(--amber-dim);
+}
+
+.dropzone:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: -1px;
 }
 
 .dropzone .error {
@@ -427,6 +543,236 @@ input[type='number'] {
   border: 1px solid var(--rule-2);
 }
 
+/* frame picker under the Downscale panes (when there are several frames) */
+
+.downscale-strip {
+  flex: none;
+  margin: 0 -20px -16px;
+}
+
+/* ─── export popover ─────────────────────────────────────── */
+
+.export-anchor {
+  position: relative;
+}
+
+.export-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 12px);
+  width: 320px;
+  z-index: 20;
+  background: var(--paper-2);
+  border: 1px solid var(--rule-2);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.export-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.export-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.export-sub,
+.export-dims {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+
+.export-name {
+  display: flex;
+  flex-direction: column;
+}
+
+.export-name input {
+  background: var(--paper);
+  border: 1px solid var(--rule-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 5px 7px;
+}
+
+.export-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.export-row .label {
+  margin: 0;
+}
+
+.export-row select {
+  width: 90px;
+}
+
+.export-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.export-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.export-kind {
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.export-inline {
+  display: flex;
+  gap: 10px;
+}
+
+.export-inline label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.export-inline input {
+  width: 58px;
+}
+
+.export-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.export-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.export-msg {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--moss);
+}
+
+.export-msg.error {
+  color: var(--red);
+}
+
+/* ─── overlays ───────────────────────────────────────────── */
+
+.drop-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 17, 23, 0.72);
+  box-shadow: inset 0 0 0 2px var(--amber);
+}
+
+.drop-veil span {
+  font-family: var(--font-display);
+  font-size: 18px;
+  color: var(--amber);
+}
+
+.shortcuts-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shortcuts {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  background: var(--paper-2);
+  border: 1px solid var(--rule-2);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  padding: 14px 18px 18px;
+}
+
+.shortcuts-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-display);
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.shortcuts dl {
+  margin: 0;
+}
+
+.shortcuts dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.shortcuts dt {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.shortcuts dd {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  text-align: right;
+}
+
+.shortcuts kbd {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule-2);
+  border-bottom-width: 2px;
+  padding: 1px 6px;
+}
+
+.shortcuts .sep {
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
 /* ─── status bar ─────────────────────────────────────────── */
 
 .statusbar {
@@ -447,6 +793,23 @@ input[type='number'] {
 
 .statusbar select {
   width: auto;
+}
+
+.statusbar .summary {
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusbar .summary b {
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.statusbar .dot {
+  color: var(--ink-4);
+  margin: 0 8px;
 }
 
 .statusbar .plug {
@@ -487,6 +850,24 @@ input[type='number'] {
   .masthead .tagline,
   .masthead .divider {
     display: none;
+  }
+
+  .modes {
+    order: 3;
+    width: 100%;
+    margin: 0;
+  }
+
+  .modes button {
+    padding: 8px 14px;
+  }
+
+  .export-panel {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: 64px;
+    width: auto;
   }
 
   .work {

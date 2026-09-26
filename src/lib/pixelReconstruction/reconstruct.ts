@@ -5,10 +5,13 @@
 //     → cell sampling (mode color per logical cell)
 //     → palette quantization (reduce to N colors)
 //     → cleanup pass (remove isolated pixels, merge near-duplicate colors)
+//
+//   reconstructSequence runs the same pipeline over several frames with one
+//   shared palette (for animations).
 //     → output: native-resolution sprite
 
 import { sampleCells, sampleCellsAverage } from './cellSampling';
-import { mergeSimilarColors, removeIsolatedPixels } from './cleanup';
+import { mergeSimilarColors, removeIsolatedPixels, removeSolidBackground } from './cleanup';
 import { toHex } from './color';
 import { detectGrid, gridFromCellSize, gridFromTarget } from './gridDetection';
 import { autoPaletteSize, countDistinctColors, quantize } from './paletteQuantize';
@@ -28,6 +31,25 @@ export interface ReconstructionResult {
   detection: GridDetectionResult;
 }
 
+/** One frame of a sequence: its source raster and, optionally, a grid the
+ *  caller already resolved (callers cache detection across re-runs). */
+export interface SequenceFrame {
+  source: RGBAImage;
+  grid?: GridDetectionResult;
+}
+
+/** Grid detection, or an explicit override: a known pixel size (still fitted
+ *  to the art's edges) or an explicit output size. */
+export function resolveGrid(source: RGBAImage, options: PixelArtOptions): GridDetectionResult {
+  if (!options.autoDetectGrid && options.cellSize && options.cellSize > 0) {
+    return gridFromCellSize(source, options.cellSize);
+  }
+  if (!options.autoDetectGrid && options.targetWidth && options.targetHeight) {
+    return gridFromTarget(source, options.targetWidth, options.targetHeight);
+  }
+  return detectGrid(source);
+}
+
 /**
  * Reconstruct a true low-resolution sprite from an AI-generated pixel-art
  * raster. Fully deterministic. `source` may be a browser `ImageData` (it is
@@ -37,57 +59,94 @@ export function reconstructPixelArt(
   source: RGBAImage,
   options: PixelArtOptions,
 ): ReconstructionResult {
-  // 1. Grid detection, or an explicit override: a known pixel size (still
-  //    phase-aligned) or an explicit output size.
-  let detection: GridDetectionResult;
-  if (!options.autoDetectGrid && options.cellSize && options.cellSize > 0) {
-    detection = gridFromCellSize(source, options.cellSize);
-  } else if (!options.autoDetectGrid && options.targetWidth && options.targetHeight) {
-    detection = gridFromTarget(source, options.targetWidth, options.targetHeight);
-  } else {
-    detection = detectGrid(source);
-  }
+  return reconstructSequence([{ source }], options)[0];
+}
 
-  // 2. Cell sampling → native-resolution sprite. `mode` flattens each cell to
-  //    its dominant color (clean pixel art); `average` keeps per-cell detail
-  //    (a faithful downscale).
+/**
+ * Reconstruct several rasters as one set — the frames of an animation. Each
+ * frame keeps its own grid, but palette quantization and color merging run
+ * over all frames together, so a color means the same thing in every frame
+ * and nothing flickers between them. A one-frame sequence is exactly
+ * `reconstructPixelArt`.
+ */
+export function reconstructSequence(
+  frames: SequenceFrame[],
+  options: PixelArtOptions,
+): ReconstructionResult[] {
+  // 1–2. Grid, then cell sampling → native-resolution sprite. `mode` flattens
+  //      each cell to its dominant color (clean pixel art); `average` keeps
+  //      per-cell detail (a faithful downscale). A solid backdrop is cleared
+  //      at this point, before it can take palette slots.
   const sampler = options.samplingMode === 'average' ? sampleCellsAverage : sampleCells;
-  let image = sampler(
-    source,
-    detection.gridWidth,
-    detection.gridHeight,
-    options.transparentBackground,
-    {
+  const detections = frames.map((f) => f.grid ?? resolveGrid(f.source, options));
+  let images = frames.map((f, i) => {
+    const detection = detections[i];
+    const sampled = sampler(f.source, detection.gridWidth, detection.gridHeight, options.transparentBackground, {
       cellWidth: detection.cellWidth,
       cellHeight: detection.cellHeight,
       offsetX: detection.offsetX,
       offsetY: detection.offsetY,
       xBounds: detection.xBounds,
       yBounds: detection.yBounds,
-    },
-  );
+    });
+    return options.removeBackground ? removeSolidBackground(sampled) : sampled;
+  });
 
-  // 3. Palette quantization.
-  const distinct = countDistinctColors(image);
+  // 3. Palette quantization, shared across frames.
+  const joined = stack(images);
+  const distinct = countDistinctColors(joined);
   const targetPalette = options.paletteSize && options.paletteSize > 0
     ? options.paletteSize
     : autoPaletteSize(distinct);
   if (targetPalette > 0 && distinct > targetPalette) {
-    image = quantize(image, targetPalette).image;
+    images = unstack(quantize(joined, targetPalette).image, images);
   }
 
   // 4. Cleanup passes. Each toggle is wired independently; anti-aliasing
   //    removal raises the thresholds of both passes (and runs them even when
   //    the individual toggles are off) so it is never a silent no-op.
+  //    Isolated-pixel removal is spatial, so it runs per frame; color merging
+  //    runs over the whole set so every frame maps colors the same way.
   const aa = options.removeAntiAliasing;
   if (options.removeIsolatedPixels || aa) {
-    image = removeIsolatedPixels(image, aa ? ISOLATED_THRESHOLD_AA : ISOLATED_THRESHOLD);
+    images = images.map((img) => removeIsolatedPixels(img, aa ? ISOLATED_THRESHOLD_AA : ISOLATED_THRESHOLD));
   }
   if (options.mergeSimilarColors || aa) {
-    image = mergeSimilarColors(image, aa ? MERGE_DELTA_E_AA : MERGE_DELTA_E);
+    images = unstack(mergeSimilarColors(stack(images), aa ? MERGE_DELTA_E_AA : MERGE_DELTA_E), images);
   }
 
-  return { result: image, detection };
+  return images.map((result, i) => ({ result, detection: detections[i] }));
+}
+
+/** Stack images vertically (left-aligned, transparent padding) into one. */
+function stack(images: RGBAImage[]): RGBAImage {
+  if (images.length === 1) return images[0];
+  const width = Math.max(...images.map((img) => img.width));
+  const height = images.reduce((h, img) => h + img.height, 0);
+  const out: RGBAImage = { data: new Uint8ClampedArray(width * height * 4), width, height };
+  let top = 0;
+  for (const img of images) {
+    for (let y = 0; y < img.height; y++) {
+      out.data.set(img.data.subarray(y * img.width * 4, (y + 1) * img.width * 4), ((top + y) * width) * 4);
+    }
+    top += img.height;
+  }
+  return out;
+}
+
+/** Split a `stack` result back into images shaped like `like`. */
+function unstack(joined: RGBAImage, like: RGBAImage[]): RGBAImage[] {
+  if (like.length === 1) return [joined];
+  let top = 0;
+  return like.map((img) => {
+    const out: RGBAImage = { data: new Uint8ClampedArray(img.width * img.height * 4), width: img.width, height: img.height };
+    for (let y = 0; y < img.height; y++) {
+      const from = ((top + y) * joined.width) * 4;
+      out.data.set(joined.data.subarray(from, from + img.width * 4), y * img.width * 4);
+    }
+    top += img.height;
+    return out;
+  });
 }
 
 /**

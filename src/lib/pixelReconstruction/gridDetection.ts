@@ -49,9 +49,12 @@ const LINE_TOLERANCE = 0.25;
 const SPACING_PENALTY = 0.5;
 // Knee detection on the residual-variance curve (fraction of total variance).
 // A candidate is on the plateau while its residual is at most PLATEAU_MAX; the
-// knee is the jump to the next sizes, (u[c+1..c+2] + ε) / (u[c] + ε).
+// knee is the jump to the next few sizes, (max u[c+1..c+3] + ε) / (u[c] + ε):
+// real images rise over a few sizes rather than in one step (an anti-aliased
+// fringe against a white backdrop blurs the kink), so look a little ahead.
 const PLATEAU_MAX = 0.2;
 const KNEE_EPS = 0.005;
+const KNEE_WINDOW = 3;
 const KNEE_MEDIUM = 1.8;
 const KNEE_HIGH = 4;
 // Refits of the settled cell size; it converges in one or two.
@@ -406,6 +409,29 @@ export function gridFromCellSize(image: RGBAImage, cellSize: number): GridDetect
 }
 
 /**
+ * Read the residual-variance curve `u` (indexed by candidate cell size, up to
+ * `maxCell`): the plateau's end is the largest size still (mostly) uniform
+ * whose next sizes jump sharply — smaller knees are divisors or sub-cell
+ * texture. `plateauEnd` is 0 when nothing qualifies (no grid); `strongest`
+ * is the sharpest knee anywhere, the fallback guess.
+ */
+export function findPlateauEnd(u: number[], maxCell: number): { plateauEnd: number; knee: number; strongest: number } {
+  const kneeAt = (c: number) => {
+    let next = 0;
+    for (let d = 1; d <= KNEE_WINDOW && c + d <= maxCell; d++) next = Math.max(next, u[c + d]);
+    return (next + KNEE_EPS) / (u[c] + KNEE_EPS);
+  };
+  let plateauEnd = 0;
+  let strongest = MIN_CELL_SIZE;
+  for (let c = MIN_CELL_SIZE; c < maxCell; c++) {
+    const k = kneeAt(c);
+    if (k > kneeAt(strongest)) strongest = c;
+    if (k >= KNEE_MEDIUM && u[c] <= PLATEAU_MAX) plateauEnd = c;
+  }
+  return { plateauEnd, knee: plateauEnd ? kneeAt(plateauEnd) : 0, strongest };
+}
+
+/**
  * Detect the implied grid: fit lines at each candidate cell size, find the
  * knee in residual within-cell variance, and settle on the spacing of the
  * edge-backed lines there (see the file header). Returns the fitted line
@@ -429,22 +455,11 @@ export function detectGrid(image: RGBAImage): GridDetectionResult {
     u[c] = gridVariance(I, fits[c].xb, fits[c].yb) / total;
   }
 
-  // The plateau's end: the largest size still (mostly) uniform whose next
-  // sizes jump sharply. Smaller knees are divisors or sub-cell texture.
-  const kneeAt = (c: number) =>
-    (Math.max(u[c + 1], c + 2 <= maxCell ? u[c + 2] : 0) + KNEE_EPS) / (u[c] + KNEE_EPS);
-  let plateauEnd = 0;
-  let strongest = MIN_CELL_SIZE;
-  for (let c = MIN_CELL_SIZE; c < maxCell; c++) {
-    const k = kneeAt(c);
-    if (k > kneeAt(strongest)) strongest = c;
-    if (k >= KNEE_MEDIUM && u[c] <= PLATEAU_MAX) plateauEnd = c;
-  }
+  const { plateauEnd, knee, strongest } = findPlateauEnd(u, maxCell);
   if (!plateauEnd) {
     // No grid: keep the best guess, reported low (and capped if large).
     return resultFromBounds(image, fits[strongest].xb, fits[strongest].yb, 'low');
   }
-  const knee = kneeAt(plateauEnd);
   const confidence: Confidence = knee >= KNEE_HIGH ? 'high' : 'medium';
 
   // Settle on the spacing the art's edges actually show, refitting there.

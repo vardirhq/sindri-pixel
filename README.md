@@ -100,13 +100,24 @@ pnpm dev          # Vite dev server on http://localhost:1420
 
 The editor detects when Tauri is absent and falls back to browser-native file pickers and canvas-based PNG encoding. Some capabilities (e.g. animated GIF export) are desktop-only.
 
-### Run the standalone downscaler
+### Run the standalone AI pixel-art tool
 
 ```bash
 pnpm dev:web      # Vite dev server on http://localhost:1421
 ```
 
-The **AI Pixel-Art Downscaler** is a second, self-contained entry point (`web/`) that ships only the reconstruction pipeline — no editor, no Tauri. It fills the viewport like an application rather than scrolling like a page, and is published as a static site at **<https://pixel.vardir.no>**.
+The **AI Pixel-Art Studio** is a second, self-contained entry point (`web/`) that ships only the reconstruction pipeline and the animation workspace — no editor, no Tauri. It fills the viewport like an application rather than scrolling like a page, and is published as a static site at **<https://pixel.vardir.no>**. It has two modes:
+
+- **Downscale**: one AI image turned into a true low-resolution sprite.
+- **Animate**: drop several AI-generated frames (a walk cycle, an attack…) and it builds the animation.
+  - Every frame is read at **one shared pixel size**, with **one shared palette**, and solid white or grey **backdrops are cleared**.
+  - Frames are **aligned by the character's feet**, so poses the generator drew in different places stand on the same ground.
+  - The stage has **onion skin**, a pixel grid and loop or ping-pong playback. Drag a frame, or nudge it with the arrow keys.
+  - Per frame you can set **position, scale** (re-read from the source, so it stays crisp), **mirror** and **hold time**. Reorder frames by dragging them in the strip.
+  - Everything is undoable. Press `?` for the keyboard shortcuts.
+  - **Export** a sprite sheet (PNG plus Aseprite-style JSON that Phaser, Godot and most engine importers read), an animated GIF, or a `.spr` project for the desktop editor.
+
+The desktop editor offers the same flow: pick several images in **Import AI art…** and the dialog opens this same workspace. The frames then land in the editor's timeline as an animation.
 
 Grid detection is automatic. It lays grid lines along the art's own pixel edges, so it follows AI output whose pixel size drifts across the image, doesn't assume the grid starts at the corner, and sees edges between colors of equal brightness. You can always override it. **Grid size → Pixel size** takes the size of one art pixel in source pixels (e.g. `3` for a 1536×1024 scene drawn in ~3px pixels). The grid is still phase-aligned to the image's edges. When auto-detection is unsure, the tool says so instead of passing off a coarse guess as the answer. If it had to hold the output to a small size, it offers the detected pixel size as a one-click fix.
 
@@ -114,7 +125,7 @@ Grid detection is automatic. It lays grid lines along the art's own pixel edges,
 
 ```bash
 pnpm build        # type-check + bundle the frontend
-pnpm build:web    # type-check + bundle the standalone downscaler → dist-web/
+pnpm build:web    # type-check + bundle the standalone web tool → dist-web/
 pnpm tauri build  # produce a native installer/binary
 ```
 
@@ -172,6 +183,9 @@ sindri-pixel/
 │   ├── data.ts               # default sprite, palettes, seed lessons
 │   ├── types.ts              # shared domain types (Frame, Layer, Tool, Lesson…)
 │   ├── components/
+│   │   ├── aiArt/            # AI-art frame workspace (stage, timeline, inspector,
+│   │   │                     #   worker engine) — shared by the web tool and the editor
+│   │   ├── import/           # Import AI Art dialog
 │   │   ├── CanvasView.tsx    # the drawing surface: grid, minimap, onion skin, symmetry
 │   │   ├── ToolsPane.tsx     # tool selection + options
 │   │   ├── RightPane.tsx     # layers · palette · inspector
@@ -181,14 +195,17 @@ sindri-pixel/
 │   │   ├── BuilderPanes.tsx  # lesson authoring mode
 │   │   └── Welcome.tsx       # welcome screen, new-project wizard, recovery
 │   ├── lib/
+│   │   ├── pixelReconstruction/ # AI raster → true low-res sprite (grid fitting, palette)
+│   │   ├── animation/        # frame alignment, sprite sheets + JSON, GIF encoder, .spr export
 │   │   ├── platform.ts       # Tauri detection + browser fallbacks
 │   │   ├── project-format.ts # versioned .spr parsing, migration & validation
 │   │   ├── sprite.ts         # compositing and sprite-sheet layout
 │   │   └── storage.ts        # recents, templates & autosave (localStorage)
 │   └── styles/tokens.css     # the Sindri design system (color + type)
 │
-├── web/                      # standalone AI Pixel-Art Downscaler (GitHub Pages)
-│   ├── DownscaleApp.tsx      # the whole single-page tool
+├── web/                      # standalone AI Pixel-Art Studio (GitHub Pages)
+│   ├── App.tsx               # Downscale / Animate modes around the shared workspace
+│   ├── ExportPanel.tsx       # sprite sheet, JSON, GIF and .spr export
 │   └── main.tsx              # entry point — pipeline + tokens only, no Tauri
 │
 └── src-tauri/                # Rust backend (Tauri 2)
@@ -207,7 +224,7 @@ sindri-pixel/
 
 When Tauri isn't available, `src/lib/platform.ts` transparently substitutes canvas-based encoders and browser file pickers so the same UI keeps working on the web.
 
-**Two frontends, one pipeline.** `src/lib/pixelReconstruction/` is pure TypeScript with no DOM or Tauri dependencies, so it powers both the desktop editor's *Import AI Art* dialog and the standalone web downscaler. The shared knob vocabulary (grid/palette/pixel-size choices, the *Clean sprite* and *High detail* presets, the mapping from those choices to pipeline options, and the wording of low-confidence notices) lives in `pixelReconstruction/uiOptions.ts` so the two front-ends can't drift apart.
+**Two frontends, one pipeline.** `src/lib/pixelReconstruction/` and `src/lib/animation/` are pure TypeScript with no DOM or Tauri dependencies, and the frame workspace UI lives once in `src/components/aiArt/`. Together they power both the desktop editor's *Import AI Art* dialog and the standalone web tool, which get the same features from one implementation. The shared knob vocabulary (grid/palette/pixel-size choices, the *Clean sprite* and *High detail* presets, the mapping from those choices to pipeline options, and the wording of low-confidence notices) lives in `pixelReconstruction/uiOptions.ts` so the two front-ends can't drift apart.
 
 Project writes use a temporary file and atomic replacement so an interrupted save does not truncate the existing project. The Rust export boundary validates dimensions, scaling, frame counts, and pixel-buffer lengths before allocating or encoding output.
 

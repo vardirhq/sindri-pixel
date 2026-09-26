@@ -141,3 +141,77 @@ export function mergeSimilarColors(image: RGBAImage, maxDeltaE: number): RGBAIma
   }
   return out;
 }
+
+/**
+ * Make a solid backdrop transparent. AI sprites often come on a flat white or
+ * grey background; if most of the image border is one opaque color, flood
+ * fill from the border through pixels near that color and clear them. The fill
+ * only spreads from the edge, so an enclosed region of the same color (the
+ * white of an eye) survives. Images without such a border — full scenes,
+ * sprites already on transparency — are returned unchanged, as is anything
+ * the fill would almost entirely erase.
+ */
+export function removeSolidBackground(image: RGBAImage, tolerance = 28, minBorderShare = 0.6): RGBAImage {
+  const { width, height, data } = image;
+  if (width < 3 || height < 3) return image;
+
+  // Dominant border color, bucketed to 5 bits per channel.
+  const border: number[] = [];
+  for (let x = 0; x < width; x++) border.push(x, (height - 1) * width + x);
+  for (let y = 1; y < height - 1; y++) border.push(y * width, y * width + width - 1);
+  const buckets = new Map<number, { n: number; r: number; g: number; b: number }>();
+  for (const i of border) {
+    const o = i * 4;
+    if (data[o + 3] < 250) continue;
+    const key = ((data[o] >> 3) << 10) | ((data[o + 1] >> 3) << 5) | (data[o + 2] >> 3);
+    const bucket = buckets.get(key) ?? { n: 0, r: 0, g: 0, b: 0 };
+    bucket.n++;
+    bucket.r += data[o];
+    bucket.g += data[o + 1];
+    bucket.b += data[o + 2];
+    buckets.set(key, bucket);
+  }
+  let top: { n: number; r: number; g: number; b: number } | null = null;
+  for (const bucket of buckets.values()) if (!top || bucket.n > top.n) top = bucket;
+  if (!top || top.n < border.length * minBorderShare) return image;
+  const bg = { r: top.r / top.n, g: top.g / top.n, b: top.b / top.n };
+
+  const tolSq = tolerance * tolerance;
+  const isBg = (i: number) => {
+    const o = i * 4;
+    if (data[o + 3] < 250) return false;
+    const dr = data[o] - bg.r;
+    const dg = data[o + 1] - bg.g;
+    const db = data[o + 2] - bg.b;
+    return dr * dr + dg * dg + db * db <= tolSq;
+  };
+  const cleared = new Uint8Array(width * height);
+  const stack: number[] = [];
+  for (const i of border) {
+    if (!cleared[i] && isBg(i)) {
+      cleared[i] = 1;
+      stack.push(i);
+    }
+  }
+  let count = stack.length;
+  while (stack.length) {
+    const i = stack.pop()!;
+    const x = i % width;
+    const next = [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i - width, i + width];
+    for (const j of next) {
+      if (j < 0 || j >= width * height || cleared[j] || !isBg(j)) continue;
+      cleared[j] = 1;
+      count++;
+      stack.push(j);
+    }
+  }
+  // Leave images the fill would almost wipe out alone: that's a flat image or
+  // a subject the same color as its surroundings, not a backdrop.
+  if (count > width * height * 0.98) return image;
+
+  const out = cloneImage(image);
+  for (let i = 0; i < width * height; i++) {
+    if (cleared[i]) out.data[i * 4] = out.data[i * 4 + 1] = out.data[i * 4 + 2] = out.data[i * 4 + 3] = 0;
+  }
+  return out;
+}

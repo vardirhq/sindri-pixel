@@ -28,7 +28,7 @@ Frontend:
 - `pnpm dev` — Vite dev server on port 1420 (strict port).
 - `pnpm test` — Vitest (unit tests).
 - `pnpm build` — `tsc && vite build`.
-- `pnpm dev:web` / `pnpm build:web` — the standalone downscaler (see below),
+- `pnpm dev:web` / `pnpm build:web` — the standalone web tool (see below),
   port 1421, output `dist-web/`.
 - `pnpm check` — tests + both bundles. **This is the CI quality gate for the
   frontend; run it before pushing.**
@@ -48,7 +48,12 @@ Desktop / Rust (all Cargo commands target `src-tauri/Cargo.toml`):
 Frontend (`src/`):
 
 - `components/` — React UI. `import/ImportAiArtDialog.tsx` drives the AI-art
-  import flow.
+  import flow; with several images it embeds `aiArt/FrameWorkspace`.
+- `components/aiArt/` — the AI-art frame workspace (stage with onion skin,
+  transport, per-frame inspector, frame strip, undo history, Web Worker
+  engine). **Shared by the editor dialog and the web tool** — build features
+  here so both get them. Styles are `aa-`-prefixed in `aiArt.css`, using only
+  design tokens.
 - `lib/project-format.ts` — the versioned `.spr` project format (with
   legacy-file migration and strict validation). Has tests.
 - `lib/sprite.ts` — sprite model, layer compositing, sprite-sheet layout. Has tests.
@@ -57,15 +62,19 @@ Frontend (`src/`):
   to the art's edges (so they follow drift and phase) and picks the cell size
   where the fitted grid's within-cell variance jumps. Has tests; synthetic
   image builders live in `__fixtures__/synthetic.ts`.
+- `lib/animation/` — pure animation assembly: anchoring frames on a shared
+  canvas (feet/center), sprite-sheet packing + Aseprite-style JSON, a GIF
+  encoder, `.spr` export, and the shared-pixel-size grid policy. Has tests.
 - `lib/platform.ts` — Tauri detection and web fallbacks (download/file-pick).
 - `lib/storage.ts` — persistence helpers.
 
 Standalone web app (`web/`):
 
 - A second Vite entry point (`vite.config.web.ts`, root `web/`) that ships
-  **only** `lib/pixelReconstruction` + the design tokens as a static GitHub
-  Pages site: <https://pixel.vardir.no>. No editor, no Tauri — don't import
-  anything Tauri-gated into it.
+  **only** `lib/pixelReconstruction`, `lib/animation`, `components/aiArt` and
+  the design tokens as a static GitHub Pages site: <https://pixel.vardir.no>.
+  Two modes: Downscale (one image) and Animate (several frames → sheet/GIF/
+  `.spr`). No editor, no Tauri — don't import anything Tauri-gated into it.
 - The layout is viewport-filling (masthead / sidebar + canvases / status bar),
   not a scrolling page: `body` is `overflow: hidden` above 820px wide, and the
   preview canvases are sized by a `ResizeObserver` rather than fixed pixels.

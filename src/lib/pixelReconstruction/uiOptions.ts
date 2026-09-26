@@ -80,6 +80,8 @@ export interface UiChoices extends CleanupSettings {
   customWidth: number;
   customHeight: number;
   transparentBackground: boolean;
+  /** Clear a flat backdrop (white, grey…) around the subject. */
+  removeBackground: boolean;
 }
 
 /** Translate the UI's choice vocabulary into pipeline options. */
@@ -118,6 +120,7 @@ export function buildOptions(c: UiChoices): PixelArtOptions {
     removeAntiAliasing: c.removeAntiAliasing,
     removeIsolatedPixels: c.removeIsolatedPixels,
     transparentBackground: c.transparentBackground,
+    removeBackground: c.removeBackground,
   };
 }
 
