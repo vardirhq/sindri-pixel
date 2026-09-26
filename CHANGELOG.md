@@ -27,6 +27,8 @@
 
 ### Fixed
 
+- Sprites with soft, semi-transparent edges no longer come out with a faint dark halo or see-through pixels. AI images often store their "solid" pixels at 94–99% opacity with a darkened, half-transparent fringe. Each art pixel is now filled or cleared by how much of it is covered, and takes its colour only from its solid pixels. On a transparent background every pixel ends up fully opaque or fully clear.
+- **Colours of very small pixels.** When one art pixel is only 2–4 source pixels wide, the image's softening reaches its centre, so the tool used to return blends of neighbouring colours. It now un-blurs small pixels before reading their colours, and never pushes a colour past its neighbours, so already-crisp art is untouched. Soft 2px art goes from about 53% to 79% of pixels correct with default settings.
 - Playing an animation on a phone no longer drags the page down to the frame strip on every frame, which made it impossible to scroll back up to the stage. The strip now scrolls only itself, sideways. On desktop the tool is also pinned to the window, so nothing can scroll the page away from the stage.
 - Grid detection no longer misses the pixel size of sprites on a **white background**. The anti-aliased fringe against white spreads the telltale jump in cell variance over a few sizes, and looking only one or two sizes ahead missed it. A real ~15px sprite on white was read as 2.8px (459×512) and is now read correctly at 15px. It is covered by a test on curves measured from that image.
 - The Import AI Art dialog's previews now scale large images down to fit, where they used to be cropped, and no longer overflow the dialog.
