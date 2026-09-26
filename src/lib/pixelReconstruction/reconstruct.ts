@@ -62,6 +62,8 @@ export function reconstructPixelArt(
       cellHeight: detection.cellHeight,
       offsetX: detection.offsetX,
       offsetY: detection.offsetY,
+      xBounds: detection.xBounds,
+      yBounds: detection.yBounds,
     },
   );
 

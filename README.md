@@ -108,7 +108,7 @@ pnpm dev:web      # Vite dev server on http://localhost:1421
 
 The **AI Pixel-Art Downscaler** is a second, self-contained entry point (`web/`) that ships only the reconstruction pipeline — no editor, no Tauri. It fills the viewport like an application rather than scrolling like a page, and is published as a static site at **<https://pixel.vardir.no>**.
 
-Grid detection is automatic, but you can always override it. **Grid size → Pixel size** takes the size of one art pixel in source pixels (e.g. `3` for a 1536×1024 scene drawn in ~3px pixels). The grid is still phase-aligned to the image's edges. When auto-detection is unsure, the tool says so instead of passing off a coarse guess as the answer. If it had to hold the output to a small size, it offers the detected pixel size as a one-click fix.
+Grid detection is automatic. It lays grid lines along the art's own pixel edges, so it follows AI output whose pixel size drifts across the image, doesn't assume the grid starts at the corner, and sees edges between colors of equal brightness. You can always override it. **Grid size → Pixel size** takes the size of one art pixel in source pixels (e.g. `3` for a 1536×1024 scene drawn in ~3px pixels). The grid is still phase-aligned to the image's edges. When auto-detection is unsure, the tool says so instead of passing off a coarse guess as the answer. If it had to hold the output to a small size, it offers the detected pixel size as a one-click fix.
 
 ### Build for production
 

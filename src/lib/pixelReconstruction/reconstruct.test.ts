@@ -6,163 +6,29 @@ import { sampleCells, sampleCellsAverage } from './cellSampling';
 import { quantize, countDistinctColors, autoPaletteSize } from './paletteQuantize';
 import { removeIsolatedPixels, mergeSimilarColors } from './cleanup';
 import { reconstructPixelArt, imageToPackedPixels, extractPalette } from './reconstruct';
-import { DEFAULT_OPTIONS, type PixelArtOptions, type RGBA, type RGBAImage } from './types';
+import { DEFAULT_OPTIONS, type PixelArtOptions, type RGBA } from './types';
+import {
+  BLUE,
+  GREEN,
+  ISOLUMINANT_PALETTE,
+  RED,
+  driftScene,
+  get,
+  gridlessNoise,
+  lcg,
+  logical8x8,
+  makeImage,
+  matchRate,
+  put,
+  realisticLogical,
+  renderGrid,
+  sceneLogical,
+  softScene,
+  upscale,
+} from './__fixtures__/synthetic';
 
-// ── Test image builders ─────────────────────────────────────────────────────
-
-function makeImage(width: number, height: number): RGBAImage {
-  return { data: new Uint8ClampedArray(width * height * 4), width, height };
-}
-
-function put(image: RGBAImage, x: number, y: number, c: RGBA): void {
-  const i = (y * image.width + x) * 4;
-  image.data[i] = c.r;
-  image.data[i + 1] = c.g;
-  image.data[i + 2] = c.b;
-  image.data[i + 3] = c.a;
-}
-
-function get(image: RGBAImage, x: number, y: number): RGBA {
-  const i = (y * image.width + x) * 4;
-  return { r: image.data[i], g: image.data[i + 1], b: image.data[i + 2], a: image.data[i + 3] };
-}
-
-/**
- * Render a logical grid of colors upscaled by `cellSize`, i.e. a "clean"
- * (perfectly gridded) pixel-art raster — the easy detection case.
- */
-function upscale(grid: (RGBA | null)[][], cellSize: number): RGBAImage {
-  const gh = grid.length;
-  const gw = grid[0].length;
-  const img = makeImage(gw * cellSize, gh * cellSize);
-  for (let gy = 0; gy < gh; gy++) {
-    for (let gx = 0; gx < gw; gx++) {
-      const c = grid[gy][gx];
-      if (!c) continue;
-      for (let dy = 0; dy < cellSize; dy++) {
-        for (let dx = 0; dx < cellSize; dx++) {
-          put(img, gx * cellSize + dx, gy * cellSize + dy, c);
-        }
-      }
-    }
-  }
-  return img;
-}
-
-const RED: RGBA = { r: 220, g: 40, b: 40, a: 255 };
-const BLUE: RGBA = { r: 40, g: 80, b: 200, a: 255 };
-const GREEN: RGBA = { r: 60, g: 180, b: 70, a: 255 };
-
-// A recognizable 8×8 checker-ish logical sprite.
-function logical8x8(): (RGBA | null)[][] {
-  return Array.from({ length: 8 }, (_, y) =>
-    Array.from({ length: 8 }, (_, x) => ((x + y) % 2 === 0 ? RED : BLUE)),
-  );
-}
-
-// Spatially-coherent random logical art — like real sprites (and unlike a
-// perfect checker, which is degenerate for grid detection because every integer
-// divisor of the true cell tiles it just as uniformly).
-function realisticLogical(gw: number, gh: number, seed: number, coherence = 0): RGBA[][] {
-  const pal: RGBA[] = [RED, BLUE, GREEN, { r: 230, g: 215, b: 60, a: 255 }, { r: 30, g: 30, b: 45, a: 255 }];
-  let s = seed >>> 0;
-  const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
-  const grid: RGBA[][] = [];
-  for (let y = 0; y < gh; y++) {
-    const row: RGBA[] = [];
-    for (let x = 0; x < gw; x++) {
-      const left = row[x - 1];
-      // `coherence` copies the left neighbor sometimes (flat regions, like real
-      // art); otherwise pick a color distinct from the left so a boundary exists.
-      if (x > 0 && rnd() < coherence) { row.push(left); continue; }
-      let c = pal[Math.floor(rnd() * pal.length)];
-      if (x > 0) while (c === left) c = pal[Math.floor(rnd() * pal.length)];
-      row.push(c);
-    }
-    grid.push(row);
-  }
-  return grid;
-}
-
-/**
- * A large AI-style "pixel art" scene with small, soft logical pixels: `cell`
- * source px per pixel, grid lines jittered by up to ±1px, every edge blurred
- * (a 3×3 tent filter, i.e. anti-aliased), a little fixed-pattern noise, and
- * the whole grid shifted right/down by `shift` px. Logical art is blobby
- * (neighbors often repeat) with fine detail, like a game scene. Returns the
- * image plus the logical grid it was rendered from.
- */
-function softScene(gw: number, gh: number, cell: number, seed: number, shift = 0): { image: RGBAImage; logical: RGBA[][] } {
-  let s = seed >>> 0;
-  const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
-  const pal: RGBA[] = [
-    { r: 70, g: 140, b: 60, a: 255 }, { r: 90, g: 165, b: 75, a: 255 }, { r: 150, g: 110, b: 70, a: 255 },
-    RED, { r: 230, g: 200, b: 80, a: 255 }, BLUE, { r: 240, g: 240, b: 230, a: 255 }, { r: 40, g: 40, b: 50, a: 255 },
-  ];
-  const logical: RGBA[][] = [];
-  for (let y = 0; y < gh; y++) {
-    const row: RGBA[] = [];
-    for (let x = 0; x < gw; x++) {
-      const r = rnd();
-      if (x > 0 && r < 0.35) row.push(row[x - 1]);
-      else if (y > 0 && r < 0.6) row.push(logical[y - 1][x]);
-      else row.push(pal[Math.floor(rnd() * pal.length)]);
-    }
-    logical.push(row);
-  }
-  const bounds = (n: number) => {
-    const b = [0];
-    for (let i = 1; i < n; i++) b.push(shift + Math.round(i * cell + (rnd() - 0.5) * 1.2));
-    b.push(n * cell + shift);
-    return b;
-  };
-  const xb = bounds(gw);
-  const yb = bounds(gh);
-  const W = xb[gw];
-  const H = yb[gh];
-  const hard = new Uint8ClampedArray(W * H * 3);
-  for (let gy = 0; gy < gh; gy++) {
-    for (let gx = 0; gx < gw; gx++) {
-      const c = logical[gy][gx];
-      for (let y = yb[gy]; y < yb[gy + 1]; y++) {
-        for (let x = xb[gx]; x < xb[gx + 1]; x++) {
-          const o = (y * W + x) * 3;
-          hard[o] = c.r; hard[o + 1] = c.g; hard[o + 2] = c.b;
-        }
-      }
-    }
-  }
-  const image = makeImage(W, H);
-  const at = (x: number, y: number, k: number) =>
-    hard[(Math.min(H - 1, Math.max(0, y)) * W + Math.min(W - 1, Math.max(0, x))) * 3 + k];
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      for (let k = 0; k < 3; k++) {
-        let v = 0;
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) v += at(x + dx, y + dy, k) * (dx ? 1 : 2) * (dy ? 1 : 2);
-        image.data[(y * W + x) * 4 + k] = v / 16 + ((x * 7 + y * 13) % 5) - 2;
-      }
-      image.data[(y * W + x) * 4 + 3] = 255;
-    }
-  }
-  return { image, logical };
-}
-
-/** Fraction of logical pixels reproduced within `tol` (max channel delta). */
-function matchRate(result: RGBAImage, logical: RGBA[][], dx = 0, dy = 0, tol = 40): number {
-  let hit = 0;
-  let total = 0;
-  for (let y = 0; y < logical.length; y++) {
-    for (let x = 0; x < logical[0].length; x++) {
-      if (x + dx >= result.width || y + dy >= result.height) continue;
-      const a = get(result, x + dx, y + dy);
-      const b = logical[y][x];
-      total++;
-      if (Math.max(Math.abs(a.r - b.r), Math.abs(a.g - b.g), Math.abs(a.b - b.b)) <= tol) hit++;
-    }
-  }
-  return hit / total;
-}
+// Shared procedural builders (soft, jittered, drifting, isoluminant art…).
+// See __fixtures__/synthetic.ts.
 
 const RAW: PixelArtOptions = {
   ...DEFAULT_OPTIONS,
@@ -377,16 +243,8 @@ describe('grid detection — texture robustness', () => {
     // but *no* real grid — like the laundry image, coarsening never sharply
     // increases within-cell variance, so grid clarity stays low. Detection must
     // not confidently emit hundreds of cells; it caps to a usable sprite.
-    const rng = (() => { let s = 12345; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
     const W = 900, H = 760;
-    const img = makeImage(W, H);
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const base = 128 + 60 * Math.sin(x / 70) + 50 * Math.cos(y / 55) + 40 * Math.sin((x + y) / 90);
-        const v = Math.max(0, Math.min(255, base + (rng() - 0.5) * 120));
-        put(img, x, y, { r: v, g: v, b: v, a: 255 });
-      }
-    }
+    const img = gridlessNoise(W, H, 120, 12345);
 
     const det = detectGrid(img);
     // Not trusted as a clean grid…
@@ -448,7 +306,7 @@ describe('large scenes with small, soft pixels', () => {
     expect(matchRate(unaligned.result, shifted.logical, 1, 1)).toBeLessThan(0.85); // ~0.78
   });
 
-  it('auto-detects the soft 3px cell (knee) instead of a coarse multiple', () => {
+  it('auto-detects the soft 3px cell instead of a coarse multiple', () => {
     const det = detectGrid(image);
     expect(det.cellSize).toBeCloseTo(3, 1);
     expect(det.gridWidth).toBe(GW);
@@ -463,6 +321,99 @@ describe('large scenes with small, soft pixels', () => {
     expect(det.gridWidth).toBe(512);
     expect(det.gridHeight).toBe(341);
     expect(det.detectedCellSize).toBe(1);
+  });
+});
+
+// ── Fitted grids: drift, phase, color, very soft cells (regression) ────────
+// A single global cell size and phase can't follow AI output: its pixel size
+// drifts across the image (one apparent pixel 14px, its neighbor 18px), the
+// grid rarely starts at the origin, some edges separate colors of equal
+// brightness, and the smallest cells are blurred almost flat. The detector
+// fits each grid line to the art's own edges; these pin that down.
+
+const RAW_AUTO: PixelArtOptions = { ...RAW, autoDetectGrid: true };
+const uniformAt = (image: ReturnType<typeof makeImage>, w: number, h: number) =>
+  reconstructPixelArt(image, { ...RAW, autoDetectGrid: false, targetWidth: w, targetHeight: h }).result;
+
+describe('fitted grids', () => {
+  it('follows a grid whose pixel size drifts across the image', () => {
+    // 60×40 logical, cells 16px ± 12% drift plus ±1px jitter.
+    const { image, logical, xb } = driftScene(60, 40, 16, 0.12, 9);
+    const det = detectGrid(image);
+    expect(det.gridWidth).toBe(60);
+    expect(det.gridHeight).toBe(40);
+    expect(det.confidence).not.toBe('low');
+    // The fitted lines are the rendered cell edges, give or take a pixel.
+    const off = det.xBounds!.map((v, i) => Math.abs(v - xb[i]));
+    expect(Math.max(...off)).toBeLessThanOrEqual(1);
+
+    const fitted = reconstructPixelArt(image, RAW_AUTO).result;
+    expect(matchRate(fitted, logical)).toBeGreaterThan(0.95); // ~1.00
+    // Even told the exact output size, an even grid drifts out of phase.
+    expect(matchRate(uniformAt(image, 60, 40), logical)).toBeLessThan(0.7); // ~0.52
+  });
+
+  it('follows drift at a small cell size too', () => {
+    const { image, logical } = driftScene(100, 70, 8, 0.1, 4);
+    const det = detectGrid(image);
+    expect([det.gridWidth, det.gridHeight]).toEqual([100, 70]);
+    expect(matchRate(reconstructPixelArt(image, RAW_AUTO).result, logical)).toBeGreaterThan(0.95);
+    expect(matchRate(uniformAt(image, 100, 70), logical)).toBeLessThan(0.6); // ~0.41
+  });
+
+  it('finds the phase of full-frame art on its own', () => {
+    // Edge-to-edge 3px art whose grid starts 2px in: auto mode now lines up
+    // with it instead of dividing evenly from the corner.
+    const { image, logical } = softScene(300, 200, 3, 42, 2);
+    const det = detectGrid(image);
+    expect(det.xBounds![1]).toBe(2);
+    expect(det.yBounds![1]).toBe(2);
+    expect(matchRate(reconstructPixelArt(image, RAW_AUTO).result, logical, 1, 1)).toBeGreaterThan(0.85); // ~0.93
+  });
+
+  it('sees edges between colors of equal brightness', () => {
+    // 6px cells in four colors of identical luminance: a luma-only detector
+    // sees nothing but the dither noise.
+    const logical = sceneLogical(80, 60, lcg(3), ISOLUMINANT_PALETTE);
+    const edges = (n: number) => Array.from({ length: n + 1 }, (_, i) => i * 6);
+    const image = renderGrid(logical, edges(80), edges(60));
+    const det = detectGrid(image);
+    expect([det.gridWidth, det.gridHeight]).toEqual([80, 60]);
+    expect(det.confidence).not.toBe('low');
+    expect(matchRate(reconstructPixelArt(image, RAW_AUTO).result, logical)).toBeGreaterThan(0.95);
+  });
+
+  it('detects soft 2px pixels without a manual pixel size', () => {
+    const { image } = softScene(300, 200, 2, 5);
+    const det = detectGrid(image);
+    expect([det.gridWidth, det.gridHeight]).toEqual([300, 200]);
+    expect(det.capped).toBe(false);
+    expect(det.confidence).not.toBe('low');
+  });
+
+  it('detects 3px pixels even under a heavy (5×5) blur', () => {
+    const { image } = softScene(300, 200, 3, 42, 0, 2);
+    const det = detectGrid(image);
+    expect([det.gridWidth, det.gridHeight]).toEqual([300, 200]);
+    expect(det.confidence).not.toBe('low');
+  });
+
+  it('ignores garbage color in fully transparent pixels', () => {
+    // A clean sprite on a transparent background whose hidden RGB is noise —
+    // common in exported PNGs. It must not create edges or variance.
+    const img = upscale(realisticLogical(12, 12, 5), 10);
+    const W = 200;
+    const out = makeImage(W, W);
+    const rnd = lcg(8);
+    for (let i = 0; i < W * W; i++) {
+      out.data[i * 4] = rnd() * 255;
+      out.data[i * 4 + 1] = rnd() * 255;
+      out.data[i * 4 + 2] = rnd() * 255;
+    }
+    for (let y = 0; y < img.height; y++) for (let x = 0; x < img.width; x++) put(out, 40 + x, 40 + y, get(img, x, y));
+    const det = detectGrid(out);
+    expect(det.cellSize).toBeCloseTo(10, 0);
+    expect(det.confidence).toBe('high');
   });
 });
 
