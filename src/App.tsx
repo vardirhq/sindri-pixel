@@ -30,6 +30,8 @@ import {
   type CheckResult, type EditorState, type Lesson, type MakerContext, type MakerDraft, type MakerSnapshot,
 } from './lib/lessons';
 import { readPalette, recolor, writePalette, type PaletteFormat } from './lib/palette';
+import { EffectsPanel, defaultEffect, type EffectKind, type EffectOptions } from './components/EffectsPanel';
+import { added, contentBounds, cropFrames, darkest, dropShadow, outline, type Rect } from './lib/effects';
 import { sindriSprite, sindriTilemap, type SindriExport } from './lib/sindriExport';
 import { buildTileset, propagateTileEdit, suggestTileSize, tiledMap, tilesetImage } from './lib/tilemap';
 import { TilesPanel } from './components/TilesPanel';
@@ -2033,6 +2035,82 @@ function App() {
     setRecovery(null);
   }, []);
 
+  // ── Effects: outline & drop shadow (live preview), trim, crop ─────────────
+  // A session keeps the frames as they were when the panel opened, so every
+  // option change re-runs the effect on untouched pixels; the whole session
+  // is one undo step and Cancel puts everything back.
+  const [effect, setEffect] = useState<{ opts: EffectOptions; orig: Frame[]; layerIdx: number } | null>(null);
+
+  const renderEffect = useCallback((orig: Frame[], o: EffectOptions, layerIdx: number): Frame[] => {
+    let out = orig;
+    orig.forEach((f, fi) => {
+      if (!o.allFrames && fi !== frameIdx) return;
+      const layer = f.layers[layerIdx];
+      if (!layer) return;
+      const next = o.kind === 'outline'
+        ? outline(layer.pixels, { color: o.color, mode: o.mode, diagonal: o.diagonal })
+        : dropShadow(layer.pixels, o.color, o.dx, o.dy);
+      if (o.ownLayer) {
+        const extra = { id: `${f.id}_${o.kind}_${Date.now()}`, name: o.kind === 'outline' ? `${layer.name} outline` : `${layer.name} shadow`, visible: true, opacity: 1, pixels: added(layer.pixels, next) };
+        out = out.map((g, gi) => (gi !== fi ? g : { ...g, layers: [...g.layers.slice(0, layerIdx), extra, ...g.layers.slice(layerIdx)] }));
+      } else {
+        out = writeLayerPixels(out, fi, layerIdx, next);
+      }
+    });
+    return out;
+  }, [frameIdx]);
+
+  const openEffect = (kind: EffectKind) => {
+    if (effect || !frames[frameIdx]?.layers[activeLayerIdx]) return;
+    pushHistory();
+    const opts = defaultEffect(kind, darkest(swatches), frames.length);
+    setEffect({ opts, orig: frames, layerIdx: activeLayerIdx });
+    setFrames(renderEffect(frames, opts, activeLayerIdx));
+    if (opts.ownLayer) setActiveLayerIdx(activeLayerIdx + 1);
+  };
+  const changeEffect = (opts: EffectOptions) => {
+    if (!effect) return;
+    setEffect({ ...effect, opts });
+    setFrames(renderEffect(effect.orig, opts, effect.layerIdx));
+    // The art stays the selected layer, above a new layer if there is one.
+    setActiveLayerIdx(effect.layerIdx + (opts.ownLayer ? 1 : 0));
+  };
+  const applyEffect = () => setEffect(null);
+  const cancelEffect = () => {
+    if (!effect) return;
+    setFrames(effect.orig);
+    setActiveLayerIdx(effect.layerIdx);
+    pastRef.current = pastRef.current.slice(0, -1);
+    setEffect(null);
+  };
+
+  // Cut the canvas to a rect (every frame and layer), as one undo step.
+  const cropTo = useCallback((rect: Rect) => {
+    if (rect.w < 1 || rect.h < 1) return;
+    pushHistory();
+    setFrames((fs) => cropFrames(fs, rect));
+    setCanvasW(rect.w);
+    setCanvasH(rect.h);
+    setSelection(null);
+  }, [pushHistory]);
+
+  // Trim: shrink the canvas to the art. Tilemaps keep their grid, so the cut
+  // snaps outward to whole tiles when any layer is one.
+  const trimCanvas = useCallback(() => {
+    const b = contentBounds(frames);
+    if (!b) { setToast('Nothing to trim — the sprite is empty.'); return; }
+    const tile = frames.flatMap((f) => f.layers).find((l) => l.tilemap)?.tilemap;
+    let r = b;
+    if (tile) {
+      const x = Math.floor(b.x / tile.tw) * tile.tw;
+      const y = Math.floor(b.y / tile.th) * tile.th;
+      r = { x, y, w: Math.ceil((b.x + b.w - x) / tile.tw) * tile.tw, h: Math.ceil((b.y + b.h - y) / tile.th) * tile.th };
+    }
+    if (r.x === 0 && r.y === 0 && r.w === canvasW && r.h === canvasH) { setToast('Already trimmed — the art touches every edge.'); return; }
+    cropTo(r);
+    setToast(`Trimmed to ${r.w} × ${r.h}.`);
+  }, [frames, canvasW, canvasH, cropTo]);
+
   // ── Tilemaps ───────────────────────────────────────────────────────────────
   const activeLayer = frames[frameIdx]?.layers[activeLayerIdx];
   const activeTilemap = activeLayer?.tilemap ?? null;
@@ -2503,6 +2581,16 @@ function App() {
             onExit={() => setTweak('tutorialMode', 'off')}
           />
         )}
+        {effect && (
+          <EffectsPanel
+            options={effect.opts}
+            swatches={swatches}
+            frameCount={frames.length}
+            onChange={changeEffect}
+            onApply={applyEffect}
+            onCancel={cancelEffect}
+          />
+        )}
         <CanvasView
           frames={frames} frameIdx={frameIdx} activeLayerIdx={activeLayerIdx}
           palette={swatches}
@@ -2688,9 +2776,12 @@ function App() {
               const { x0, y0, x1, y1 } = selection;
               const minX = Math.min(x0, x1), maxX = Math.max(x0, x1);
               const minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
-              resizeCanvas(maxX - minX + 1, maxY - minY + 1, 'top-left');
+              cropTo({ x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 });
             }
           }
+          else if (id === 'trim')           trimCanvas();
+          else if (id === 'fx-outline')     openEffect('outline');
+          else if (id === 'fx-shadow')      openEffect('shadow');
           else if (id === 'flip-h')         flipH();
           else if (id === 'flip-v')         flipV();
           else if (id === 'rotate-cw')      rotate90(true);
