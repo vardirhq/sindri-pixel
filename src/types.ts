@@ -19,6 +19,7 @@ export interface Frame {
 export type Tool =
   | 'pencil'
   | 'eraser'
+  | 'shade'
   | 'fill'
   | 'picker'
   | 'line'
@@ -38,6 +39,10 @@ export interface ToolOptions {
   perfectShapes: boolean;
   contiguous: boolean;
   threshold: number;
+  /** Freehand strokes drop doubled L-corner pixels (brush size 1). */
+  pixelPerfect: boolean;
+  /** Which way the Shade tool steps along a colour's ramp. */
+  shadeMode: 'lighten' | 'darken';
 }
 
 export type SymmetryMode = 'off' | 'v' | 'h' | 'both';
