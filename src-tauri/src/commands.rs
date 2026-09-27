@@ -336,6 +336,97 @@ pub async fn import_png(path: String) -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({ "w": w, "h": h, "pixels": pixels }))
 }
 
+/// The longest asset name `export_sindri` will write.
+const MAX_SINDRI_NAME: usize = 64;
+
+/// A Sindri asset name: lowercase letters, digits, `-` and `_`, starting with
+/// a letter or digit. It becomes a file name and part of an asset ID, so it
+/// is checked here rather than trusted.
+fn validate_sindri_name(name: &str) -> Result<(), String> {
+    let ok = !name.is_empty()
+        && name.len() <= MAX_SINDRI_NAME
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{name}` is not a Sindri asset name (lowercase letters, digits, - and _)"
+        ))
+    }
+}
+
+fn encode_png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+        writer.write_image_data(pixels).map_err(|e| e.to_string())?;
+    }
+    Ok(bytes)
+}
+
+/// Export into a Sindri project's assets folder: the image and its sheet as
+/// `textures/<name>.png` and `textures/<name>.sheet.json`, and the entity as
+/// `prefabs/<name>.prefab.json`, creating the two folders when needed.
+///
+/// Every file is written atomically, and the JSON is checked first, so a
+/// failed export never leaves a half-written asset for the engine to trip on.
+/// Returns the three paths written, relative to the assets folder.
+#[command]
+pub async fn export_sindri(
+    assets_dir: String,
+    name: String,
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+    sheet: String,
+    prefab: String,
+) -> Result<Vec<String>, String> {
+    use std::path::PathBuf;
+
+    validate_sindri_name(&name)?;
+    validate_rgba(&pixels, width, height)?;
+    for (what, text) in [("sheet", &sheet), ("prefab", &prefab)] {
+        serde_json::from_str::<serde_json::Value>(text)
+            .map_err(|error| format!("refusing to write an invalid {what}: {error}"))?;
+    }
+    let root = PathBuf::from(assets_dir);
+    if !root.is_dir() {
+        return Err(format!("{} is not a folder", root.display()));
+    }
+    let png = encode_png(&pixels, width, height)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let textures = root.join("textures");
+        let prefabs = root.join("prefabs");
+        std::fs::create_dir_all(&textures).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&prefabs).map_err(|error| error.to_string())?;
+        atomic_write(&textures.join(format!("{name}.png")), &png)?;
+        atomic_write(
+            &textures.join(format!("{name}.sheet.json")),
+            sheet.as_bytes(),
+        )?;
+        atomic_write(
+            &prefabs.join(format!("{name}.prefab.json")),
+            prefab.as_bytes(),
+        )?;
+        Ok(vec![
+            format!("textures/{name}.png"),
+            format!("textures/{name}.sheet.json"),
+            format!("prefabs/{name}.prefab.json"),
+        ])
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,6 +500,53 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "1a1c2c\n");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn sindri_names_are_checked() {
+        assert!(validate_sindri_name("hero").is_ok());
+        assert!(validate_sindri_name("level-1_b").is_ok());
+        for bad in ["", "Hero", "-x", "a/b", "a.b", "../x", &"a".repeat(65)] {
+            assert!(
+                validate_sindri_name(bad).is_err(),
+                "{bad} should be refused"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sindri_export_writes_textures_and_prefab() {
+        let directory =
+            std::env::temp_dir().join(format!("sindri-pixel-export-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let written = export_sindri(
+            directory.to_string_lossy().into_owned(),
+            "hero".to_string(),
+            1,
+            1,
+            vec![255, 0, 0, 255],
+            "{\"format_version\":1}".to_string(),
+            "{\"format_version\":1,\"entities\":[]}".to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(written.len(), 3);
+        let png = std::fs::read(directory.join("textures/hero.png")).unwrap();
+        assert_eq!(&png[1..4], b"PNG");
+        assert!(directory.join("textures/hero.sheet.json").is_file());
+        assert!(directory.join("prefabs/hero.prefab.json").is_file());
+        let refused = export_sindri(
+            directory.to_string_lossy().into_owned(),
+            "hero".to_string(),
+            1,
+            1,
+            vec![255, 0, 0, 255],
+            "not json".to_string(),
+            "{}".to_string(),
+        )
+        .await;
+        assert!(refused.unwrap_err().contains("sheet"));
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

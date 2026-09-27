@@ -30,6 +30,7 @@ import {
   type CheckResult, type EditorState, type Lesson, type MakerContext, type MakerDraft, type MakerSnapshot,
 } from './lib/lessons';
 import { readPalette, recolor, writePalette, type PaletteFormat } from './lib/palette';
+import { sindriSprite, sindriTilemap, type SindriExport } from './lib/sindriExport';
 import { buildTileset, propagateTileEdit, suggestTileSize, tiledMap, tilesetImage } from './lib/tilemap';
 import { TilesPanel } from './components/TilesPanel';
 import { duplicateLinked, independentLayers, linkSize, linkToPrevious, propagateFrame, pruneLinks, unlinkLayer, writeLayerPixels } from './lib/cels';
@@ -354,7 +355,7 @@ function ResizeCanvasModal({
 // Export Modal
 // ---------------------------------------------------------------------------
 
-export type ExportFormat = 'png' | 'gif' | 'sheet';
+export type ExportFormat = 'png' | 'gif' | 'sheet' | 'sindri';
 
 function ExportModal({
   open, format, frameCount, canvasW, canvasH, onClose, onExport,
@@ -365,9 +366,10 @@ function ExportModal({
   canvasW: number;
   canvasH: number;
   onClose: () => void;
-  onExport: (format: ExportFormat, scale: number, columns: number) => void;
+  onExport: (format: ExportFormat, scale: number, columns: number, pixelsPerUnit: number) => void;
 }) {
   const [scale, setScale] = React.useState(1);
+  const [ppu, setPpu] = React.useState(16);
   const [columns, setColumns] = React.useState(frameCount);
 
   React.useEffect(() => {
@@ -380,7 +382,9 @@ function ExportModal({
     png: 'Export PNG (current frame)',
     gif: 'Export animated GIF',
     sheet: 'Export sprite sheet',
+    sindri: 'Export to Sindri',
   };
+  const sindri = format === 'sindri';
   const rows = format === 'sheet' ? Math.ceil(frameCount / Math.max(1, columns)) : 1;
   const outW = (format === 'sheet' ? canvasW * Math.min(columns, frameCount) : canvasW) * scale;
   const outH = (format === 'sheet' ? canvasH * rows : canvasH) * scale;
@@ -403,14 +407,32 @@ function ExportModal({
       <div style={box} onClick={e => e.stopPropagation()}>
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, marginBottom: 20 }}>{titles[format]}</div>
 
-        <div style={label}>Scale</div>
-        <div style={segRow}>
-          {[1, 2, 4, 8, 16].map((s, i) => (
-            <div key={s} style={{ ...seg(scale === s), ...(i === 0 ? { borderLeft: '1px solid var(--rule-2)' } : {}) }} onClick={() => setScale(s)}>
-              {s}×
+        {sindri ? (
+          <React.Fragment>
+            <div style={label}>Pixels per world unit</div>
+            <div style={segRow}>
+              {[8, 16, 32, 64].map((s, i) => (
+                <div key={s} data-ppu={s} style={{ ...seg(ppu === s), ...(i === 0 ? { borderLeft: '1px solid var(--rule-2)' } : {}) }} onClick={() => setPpu(s)}>
+                  {s}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5, marginBottom: 14 }}>
+              A {canvasW}×{canvasH} sprite is {+(canvasW / ppu).toFixed(3)}×{+(canvasH / ppu).toFixed(3)} units in the world. Frames are named by tag, and each tag becomes an animation clip.
+            </div>
+          </React.Fragment>
+        ) : (
+          <React.Fragment>
+            <div style={label}>Scale</div>
+            <div style={segRow}>
+              {[1, 2, 4, 8, 16].map((s, i) => (
+                <div key={s} style={{ ...seg(scale === s), ...(i === 0 ? { borderLeft: '1px solid var(--rule-2)' } : {}) }} onClick={() => setScale(s)}>
+                  {s}×
+                </div>
+              ))}
+            </div>
+          </React.Fragment>
+        )}
 
         {format === 'sheet' && (
           <React.Fragment>
@@ -426,12 +448,12 @@ function ExportModal({
         )}
 
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-4)', marginBottom: 20 }}>
-          output · {outW} × {outH} px{format === 'gif' ? ` · ${frameCount} frames` : format === 'sheet' ? ` · ${frameCount} tiles + .json (frames, durations, tags)` : ''}
+          {sindri ? <>textures/ ← .png + .sheet.json<br />prefabs/ ← .prefab.json</> : <>output · {outW} × {outH} px</>}{sindri ? '' : format === 'gif' ? ` · ${frameCount} frames` : format === 'sheet' ? ` · ${frameCount} tiles + .json (frames, durations, tags)` : ''}
         </div>
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={btn(false)}>Cancel</button>
-          <button onClick={() => { onExport(format, scale, columns); onClose(); }} style={btn(true)}>Export</button>
+          <button data-export-go onClick={() => { onExport(format, scale, columns, ppu); onClose(); }} style={btn(true)}>Export</button>
         </div>
       </div>
     </div>
@@ -1912,11 +1934,61 @@ function App() {
   // ── Export modal dispatch ──────────────────────────────────────────────────
   const [exportModalFor, setExportModalFor] = useState<ExportFormat | null>(null);
 
-  const runExport = useCallback((format: ExportFormat, scale: number, columns: number) => {
+  // ── Export to Sindri (sindri2) ─────────────────────────────────────────────
+  // Into a Sindri project's assets folder (remembered): textures/<name>.png +
+  // .sheet.json and prefabs/<name>.prefab.json. The browser downloads the
+  // three files instead.
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  const writeSindri = useCallback(async (out: SindriExport) => {
+    const { w, h, pixels } = out.image;
+    const rgba = compositeSpriteFrame({ id: 'sindri', duration: 0, layers: [{ id: 'sindri', name: 'sindri', visible: true, opacity: 1, pixels }] }, w, h);
+    const sheet = JSON.stringify(out.sheet, null, 2);
+    const prefab = JSON.stringify(out.prefab, null, 2);
+    try {
+      if (!IS_TAURI) {
+        downloadBytes(await encodePngInBrowser(rgba, w, h, 1), `${out.name}.png`, 'image/png');
+        downloadText(sheet, `${out.name}.sheet.json`);
+        downloadText(prefab, `${out.name}.prefab.json`);
+        setToast(`Saved ${out.name}.png, .sheet.json and .prefab.json — put the first two in your project's textures/ and the prefab in prefabs/.`);
+        return;
+      }
+      let last: string | null = null;
+      try { last = localStorage.getItem('sindri_assets_dir'); } catch { /* not remembered */ }
+      const dir = await openDialog({ directory: true, multiple: false, title: "Choose your Sindri project's assets folder", defaultPath: last ?? undefined });
+      if (!dir || Array.isArray(dir)) return;
+      try { localStorage.setItem('sindri_assets_dir', dir); } catch { /* not remembered */ }
+      const written = await invoke<string[]>('export_sindri', { assetsDir: dir, name: out.name, width: w, height: h, pixels: rgba, sheet, prefab });
+      setToast(`Exported to Sindri: ${written.join(', ')}`);
+    } catch (err) {
+      console.error('exportToSindri failed', err);
+      window.alert(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  const exportSpriteToSindri = useCallback((pixelsPerUnit: number) => {
+    void writeSindri(sindriSprite({
+      title: projectName.replace(/\.spr$/i, ''),
+      frames: frames.map((f) => compositeGrid(f, canvasW, canvasH)),
+      w: canvasW,
+      h: canvasH,
+      durations: frames.map((f) => f.duration),
+      tags,
+      pixelsPerUnit,
+    }));
+  }, [writeSindri, projectName, frames, canvasW, canvasH, tags]);
+
+  const runExport = useCallback((format: ExportFormat, scale: number, columns: number, pixelsPerUnit = 16) => {
     if (format === 'png') void exportPng(scale);
     else if (format === 'gif') void exportGif(scale);
+    else if (format === 'sindri') exportSpriteToSindri(pixelsPerUnit);
     else void exportSpriteSheet(scale, columns);
-  }, [exportPng, exportGif, exportSpriteSheet]);
+  }, [exportPng, exportGif, exportSpriteSheet, exportSpriteToSindri]);
 
   // ── Autosave (crash recovery) ──────────────────────────────────────────────
   useEffect(() => {
@@ -2022,6 +2094,20 @@ function App() {
       setToolOptions((o) => ({ ...o, brush: null, brushGrid: null }));
     }
   }, [tileStamping, activeTilemap, toolOptions.brushGrid]);
+
+  // The frame's tilemap layers of the active layer's tile size, as a Sindri
+  // prefab (one sindri.tilemap per layer).
+  const exportTilemapToSindri = useCallback(() => {
+    const tm = activeTilemap;
+    const frame = frames[frameIdx];
+    if (!tm || !frame) return;
+    const layers = frame.layers.filter((l) => l.tilemap && l.tilemap.tw === tm.tw && l.tilemap.th === tm.th);
+    try {
+      void writeSindri(sindriTilemap({ title: `${projectName.replace(/\.spr$/i, '')} map`, layers: layers.map((l) => ({ name: l.name, pixels: l.pixels })), size: tm }));
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err));
+    }
+  }, [activeTilemap, frames, frameIdx, projectName, writeSindri]);
 
   // Tileset PNG + Tiled map (.tmj) of this frame's tilemap layers of the
   // active layer's tile size, sharing one tileset.
@@ -2551,6 +2637,7 @@ function App() {
                 onStampTile={chooseStampTile}
                 onSetTileSize={setTileSize}
                 onExport={() => void exportTilemap()}
+                onExportSindri={exportTilemapToSindri}
               />
             ) : null}
           />
@@ -2588,6 +2675,7 @@ function App() {
           else if (id === 'export-png')     setExportModalFor('png');
           else if (id === 'export-gif')     setExportModalFor('gif');
           else if (id === 'export-sheet')   setExportModalFor('sheet');
+          else if (id === 'export-sindri')  setExportModalFor('sindri');
           else if (id === 'shortcuts')      setShortcutsOpen(true);
           else if (id === 'undo')           undo();
           else if (id === 'redo')           redo();
@@ -2632,6 +2720,16 @@ function App() {
       />
 
       <Confetti burst={confetti} />
+      {toast && (
+        <div
+          role="status"
+          data-toast
+          onClick={() => setToast(null)}
+          style={{ position: 'fixed', left: '50%', bottom: 44, transform: 'translateX(-50%)', zIndex: 250, maxWidth: 'min(560px, 90vw)', padding: '10px 14px', background: 'var(--paper-2)', border: '1px solid var(--moss)', color: 'var(--ink)', fontFamily: 'var(--font-sans)', fontSize: 12.5, lineHeight: 1.45, boxShadow: '0 12px 28px rgba(0,0,0,0.45)', cursor: 'pointer' }}
+        >
+          <span style={{ color: 'var(--moss)', marginRight: 8 }}>✓</span>{toast}
+        </div>
+      )}
       <TutorialLibrary
         open={tutorialMode === 'library'}
         lessons={BUILTIN_LESSONS}

@@ -11,6 +11,7 @@ pub fn run() {
             commands::export_png,
             commands::export_gif,
             commands::import_png,
+            commands::export_sindri,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

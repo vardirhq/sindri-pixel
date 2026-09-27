@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Export to Sindri.** *Menu → Export to Sindri…* writes a sprite straight into a Sindri engine (sindri2) project. The desktop app asks for the project's assets folder once and remembers it; the browser downloads the files.
+  - Three files, the way Sindri keeps art: `textures/<name>.png`, the `textures/<name>.sheet.json` that names its frames, and `prefabs/<name>.prefab.json` with the entity.
+  - Frames are named by animation tag (`run-0`, `run-1`…). Each tag becomes a clip in `sindri.animation.sprite` (reverse and ping-pong tags play that way), the first clip plays, and `sindri.sprite` shows its first frame. A tag with mixed frame durations plays at their average, because a Sindri clip has one speed.
+  - Choose how many pixels make one world unit (16 by default, as in Sindri's platformer); the prefab scales the sprite to match.
+- **Tilemaps export to Sindri** from the tiles panel (*Sindri*, beside *Tiled*): a prefab with one `sindri.tilemap` per tilemap layer, sharing one texture, one tile per world unit. Sindri's tilemap cells can't flip, so a tile used flipped is baked into the texture as its own sprite (`tile-3-h`). Several layers hang under one root entity, as a prefab requires. Tilemap exports are named `<name>-map` so they don't overwrite the sprite's.
+- The files are checked against the engine's rules before writing (asset name, valid JSON, one root entity), and written atomically by a new `export_sindri` command that creates `textures/` and `prefabs/` when needed.
 - **Tilemaps.** Any layer can become a tilemap: open *Layers*, pick a tile size and press *Make tilemap*. The size that fits the art best is suggested (✓), so an existing level or an AI-generated one is one click away.
   - **Tiles are found for you.** The tileset is worked out from the pixels: every distinct tile is listed once, a flipped copy reuses the same tile, and each tile shows how often it's used. There's nothing to keep in sync by hand, and every drawing tool keeps working.
   - **Edit every copy.** Drawing in one tile draws in every copy of it, live and flipped to match; hovering a tile outlines all its copies, so you see what a stroke will change. Drawing on empty ground stays where you draw. Turn *Edit every copy* off to change just one cell (it becomes a new tile).
