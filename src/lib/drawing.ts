@@ -109,3 +109,31 @@ export function makeShader(palette: Iterable<string>): (hex: string, dir: 'light
     return out;
   };
 }
+
+/** A selection: a rectangle, optionally narrowed to listed pixels (wand,
+ *  lasso). */
+export interface SelectionShape {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  pixels?: [number, number][];
+}
+
+/** Capture a custom brush from the selected pixels of a layer, trimmed to
+ *  its painted pixels. Null when the selection holds nothing painted. */
+export function brushFromSelection(layer: (string | null)[][], sel: SelectionShape): (string | null)[][] | null {
+  const minX = Math.min(sel.x0, sel.x1), maxX = Math.max(sel.x0, sel.x1);
+  const minY = Math.min(sel.y0, sel.y1), maxY = Math.max(sel.y0, sel.y1);
+  const picked = sel.pixels ? new Set(sel.pixels.map(([x, y]) => `${x},${y}`)) : null;
+  const at = (x: number, y: number) => (picked && !picked.has(`${x},${y}`) ? null : layer[y]?.[x] ?? null);
+  let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      if (!at(x, y)) continue;
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    }
+  }
+  if (x1 < 0) return null;
+  return Array.from({ length: y1 - y0 + 1 }, (_, dy) => Array.from({ length: x1 - x0 + 1 }, (_, dx) => at(x0 + dx, y0 + dy)));
+}
