@@ -511,7 +511,7 @@ export function CanvasView({
   const setPixelInDraft = (
     draft: PixelGrid, x: number, y: number,
     col: string | null | ((px: number, py: number) => string | null | undefined),
-    opts: { size?: number; ignoreSelection?: boolean } = {},
+    opts: { size?: number; ignoreSelection?: boolean; brushColors?: boolean } = {},
   ) => {
     const sz = opts.size ?? toolOptions.brushSize ?? 1;
     const put = (px: number, py: number) => {
@@ -531,7 +531,33 @@ export function CanvasView({
       }
     };
     const r = Math.floor(sz / 2);
-    const stamp = (cx: number, cy: number) => {
+    // A custom brush stamps its shape, centred on the cursor, mirrored along
+    // with its position under symmetry. A pencil paints the brush's own
+    // colours (or the current one); the eraser and shade use it as a mask.
+    const brush = opts.size === undefined ? toolOptions.brush : null;
+    const stamp = (cx: number, cy: number, flipX = false, flipY = false) => {
+      if (brush) {
+        const bh = brush.length;
+        const bw = brush[0]?.length ?? 0;
+        const ox = cx - Math.floor(bw / 2);
+        const oy = cy - Math.floor(bh / 2);
+        for (let by = 0; by < bh; by++) {
+          for (let bx = 0; bx < bw; bx++) {
+            const cell = brush[flipY ? bh - 1 - by : by][flipX ? bw - 1 - bx : bx];
+            if (!cell) continue;
+            if (opts.brushColors && toolOptions.brushOwnColors) {
+              const own = cell;
+              const px = ox + bx, py = oy + by;
+              if (!opts.ignoreSelection && !isInSelection(px, py)) continue;
+              if (modifiers.tile) draft[((py % canvasH) + canvasH) % canvasH][((px % canvasW) + canvasW) % canvasW] = own;
+              else if (px >= 0 && px < canvasW && py >= 0 && py < canvasH) draft[py][px] = own;
+            } else {
+              apply(ox + bx, oy + by);
+            }
+          }
+        }
+        return;
+      }
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           if (sz === 1 && (dx !== 0 || dy !== 0)) continue;
@@ -543,9 +569,9 @@ export function CanvasView({
     const sym = modifiers.symmetry;
     const mx = canvasW - 1 - x;
     const my = canvasH - 1 - y;
-    if (sym === 'v' || sym === 'both') stamp(mx, y);
-    if (sym === 'h' || sym === 'both') stamp(x, my);
-    if (sym === 'both') stamp(mx, my);
+    if (sym === 'v' || sym === 'both') stamp(mx, y, true, false);
+    if (sym === 'h' || sym === 'both') stamp(x, my, false, true);
+    if (sym === 'both') stamp(mx, my, true, true);
   };
 
   const linePixels = (x0: number, y0: number, x1: number, y1: number): [number, number][] => {
@@ -708,10 +734,11 @@ export function CanvasView({
   };
 
   // Redraw a freehand stroke over the layer it started on.
-  const renderFreehand = (orig: PixelGrid, path: Point[], paint: NonNullable<DragState>['paint']) => {
+  const renderFreehand = (orig: PixelGrid, path: Point[], paint: NonNullable<DragState>['paint'], pencil: boolean) => {
     const draft = orig.map((r) => r.slice());
-    const points = toolOptions.pixelPerfect && (toolOptions.brushSize ?? 1) === 1 ? pixelPerfect(path) : path;
-    for (const [px, py] of points) setPixelInDraft(draft, px, py, paint!);
+    const points = toolOptions.pixelPerfect && !toolOptions.brush && (toolOptions.brushSize ?? 1) === 1 ? pixelPerfect(path) : path;
+    // Only the pencil paints a custom brush's own colours.
+    for (const [px, py] of points) setPixelInDraft(draft, px, py, paint!, { brushColors: pencil });
     return draft;
   };
 
@@ -800,7 +827,7 @@ export function CanvasView({
         paint = () => value;
       }
       const path: Point[] = [[x, y]];
-      onPixelsChange(renderFreehand(orig, path, paint));
+      onPixelsChange(renderFreehand(orig, path, paint, tool === 'pencil'));
       setDrag({ tool, lastX: x, lastY: y, orig, path, paint });
 
     } else if (tool === 'line' || tool === 'rect' || tool === 'circle') {
@@ -912,7 +939,7 @@ export function CanvasView({
       const cy = Math.max(0, Math.min(canvasH - 1, y));
       if (cx === drag.lastX && cy === drag.lastY) return;
       const path = drag.path!.concat(linePixels(drag.lastX!, drag.lastY!, cx, cy).slice(1));
-      onPixelsChange(renderFreehand(drag.orig!, path, drag.paint));
+      onPixelsChange(renderFreehand(drag.orig!, path, drag.paint, drag.tool === 'pencil'));
       setDrag({ ...drag, lastX: cx, lastY: cy, path });
 
     } else if (drag.tool === 'line') {

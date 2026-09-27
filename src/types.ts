@@ -46,6 +46,11 @@ export interface ToolOptions {
   pixelPerfect: boolean;
   /** Which way the Shade tool steps along a colour's ramp. */
   shadeMode: 'lighten' | 'darken';
+  /** A custom brush (captured from a selection, centred on the cursor);
+   *  null = the square brush of `brushSize`. */
+  brush: PixelGrid | null;
+  /** Custom brush paints its own colours (true) or the current colour. */
+  brushOwnColors: boolean;
 }
 
 export type SymmetryMode = 'off' | 'v' | 'h' | 'both';

@@ -148,6 +148,22 @@ const HELPERS: Array<{ id: string; Ico: React.FC<{ size?: number }>; label: stri
   { id: 'iso',     Ico: IconIso,  label: 'Iso' },
 ];
 
+// ── BrushPreview ─────────────────────────────────────────────────────────────
+
+function BrushPreview({ brush }: { brush: (string | null)[][] }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const h = brush.length;
+  const w = brush[0]?.length ?? 0;
+  useEffect(() => {
+    const ctx = ref.current?.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, w, h);
+    brush.forEach((row, y) => row.forEach((c, x) => { if (c) { ctx.fillStyle = c; ctx.fillRect(x, y, 1, 1); } }));
+  }, [brush, w, h]);
+  const k = Math.max(1, Math.floor(20 / Math.max(w, h)));
+  return <canvas ref={ref} width={w} height={h} style={{ width: w * k, height: h * k, imageRendering: 'pixelated', background: '#0a0e14' }} />;
+}
+
 // ── ToolTooltip ──────────────────────────────────────────────────────────────
 
 interface TooltipInfo {
@@ -373,13 +389,44 @@ export function ToolsPane({
         <span style={tpStyles.sectionMeta}>{activeTool?.label}</span>
       </div>
 
-      <div style={tpStyles.optRow}>
-        <span style={tpStyles.optLabel}>Brush size</span>
-        <span style={tpStyles.optValue}>{toolOptions.brushSize}px</span>
-      </div>
-      <div style={{ padding: '0 16px 8px' }}>
-        <PixelSlider min={1} max={16} value={toolOptions.brushSize} onChange={v => onToolOptionChange('brushSize', v)} snap={8} />
-      </div>
+      {toolOptions.brush ? (
+        <>
+          <div style={tpStyles.optRow}>
+            <span style={tpStyles.optLabel}>Brush</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <BrushPreview brush={toolOptions.brush} />
+              <span style={tpStyles.optValue}>{toolOptions.brush[0]?.length ?? 0}×{toolOptions.brush.length}</span>
+              <span
+                role="button"
+                title="Back to the square brush"
+                onClick={() => onToolOptionChange('brush', null)}
+                style={{ cursor: 'pointer', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', fontSize: 11 }}
+              >
+                ×
+              </span>
+            </span>
+          </div>
+          <div style={tpStyles.modRow} onClick={() => onToolOptionChange('brushOwnColors', !toolOptions.brushOwnColors)}>
+            <span style={tpStyles.modName}>Paint brush colours</span>
+            <div style={tpStyles.modToggle(toolOptions.brushOwnColors)}>
+              <div style={tpStyles.modThumb(toolOptions.brushOwnColors)} />
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={tpStyles.optRow}>
+            <span style={tpStyles.optLabel}>Brush size</span>
+            <span style={tpStyles.optValue}>{toolOptions.brushSize}px</span>
+          </div>
+          <div style={{ padding: '0 16px 8px' }}>
+            <PixelSlider min={1} max={16} value={toolOptions.brushSize} onChange={v => onToolOptionChange('brushSize', v)} snap={8} />
+          </div>
+          <div style={{ padding: '0 16px 8px', fontSize: 11, color: 'var(--ink-4)' }}>
+            Select pixels and press ⌘B to paint with them as a brush.
+          </div>
+        </>
+      )}
 
       <div style={tpStyles.optRow}>
         <span style={tpStyles.optLabel}>Threshold</span>

@@ -52,3 +52,29 @@ describe('shading ramps', () => {
     expect(BLUE).toContain(shade(BLUE[2], 'darken'));
   });
 });
+
+describe('custom brushes', () => {
+  const layer = [
+    [null, null, null, null],
+    [null, '#aa0000', null, null],
+    [null, '#00aa00', '#0000aa', null],
+    [null, null, null, null],
+  ];
+
+  it('captures the selected pixels, trimmed to what is painted', async () => {
+    const { brushFromSelection } = await import('./drawing');
+    expect(brushFromSelection(layer, { x0: 0, y0: 0, x1: 3, y1: 3 })).toEqual([
+      ['#aa0000', null],
+      ['#00aa00', '#0000aa'],
+    ]);
+  });
+
+  it('respects an irregular selection and returns null when empty', async () => {
+    const { brushFromSelection } = await import('./drawing');
+    expect(brushFromSelection(layer, { x0: 1, y0: 1, x1: 2, y1: 2, pixels: [[1, 1], [2, 2]] })).toEqual([
+      ['#aa0000', null],
+      [null, '#0000aa'],
+    ]);
+    expect(brushFromSelection(layer, { x0: 3, y0: 0, x1: 3, y1: 3 })).toBeNull();
+  });
+});

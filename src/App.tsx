@@ -24,6 +24,7 @@ import { getRecents, pushRecent, getSavedTemplates, saveTemplate, readAutosave, 
 import type { RecentFile, SavedTemplate, AutosaveSnapshot } from './lib/storage';
 import { IS_TAURI, downloadBytes, downloadText, pickFile, encodePngInBrowser, decodePngInBrowser } from './lib/platform';
 import { parseProject, serializeProject } from './lib/project-format';
+import { brushFromSelection } from './lib/drawing';
 import { duplicateLinked, independentLayers, linkSize, linkToPrevious, propagateFrame, pruneLinks, unlinkLayer, writeLayerPixels } from './lib/cels';
 import { clampTags, freshTagName, nextPlayFrame, tagSequence, tagsAfterDelete, tagsAfterInsert, tagsAfterMove, validateTags, type FrameTag } from './lib/tags';
 import { gridSheet, sheetJson } from './lib/animation';
@@ -164,6 +165,7 @@ const SHORTCUT_SECTIONS = [
     { keys: '⌘C',   label: 'Copy selection' },
     { keys: '⌘X',   label: 'Cut selection' },
     { keys: '⌘V',   label: 'Paste' },
+    { keys: '⌘B',   label: 'Use selection as brush' },
     { keys: 'Del',  label: 'Delete selection pixels' },
   ]},
   { title: 'Tools', rows: [
@@ -460,6 +462,8 @@ function App() {
     threshold: 32,
     pixelPerfect: true,
     shadeMode: 'darken',
+    brush: null,
+    brushOwnColors: true,
   });
   const [modifiers, setModifiers] = useState<Modifiers>({ symmetry: 'off', tile: false });
   const [helper, setHelper] = useState<ViewHelper>(null);
@@ -1482,6 +1486,17 @@ function App() {
   }, []);
 
   // ── Context menu builders ─────────────────────────────────────────────────
+  // ── Custom brush: the selected pixels of the active layer ─────────────────
+  const captureBrush = useCallback(() => {
+    const layer = frames[frameIdx]?.layers[activeLayerIdx];
+    if (!selection || !layer) return;
+    const brush = brushFromSelection(layer.pixels, selection);
+    if (!brush) { window.alert('The selection has no painted pixels on this layer to make a brush from.'); return; }
+    setToolOptions((o) => ({ ...o, brush }));
+    setSelection(null);
+    setTool('pencil');
+  }, [frames, frameIdx, activeLayerIdx, selection]);
+
   const openCanvasContextMenu = useCallback((x: number, y: number) => {
     const hasSel = !!selection;
     const hasClip = !!clipboard;
@@ -1493,6 +1508,7 @@ function App() {
       { type: 'action', id: 'ctx-copy',         label: 'Copy',               shortcut: '⌘C', disabled: !hasSel },
       { type: 'action', id: 'ctx-paste',        label: 'Paste',              shortcut: '⌘V', disabled: !hasClip },
       { type: 'action', id: 'ctx-delete',       label: 'Delete',             shortcut: '⌫',  disabled: !hasSel, danger: true },
+      { type: 'action', id: 'ctx-brush',        label: 'Use selection as brush', shortcut: '⌘B', disabled: !hasSel },
       { type: 'separator' },
       { type: 'action', id: 'ctx-clear-layer',  label: 'Clear layer',        danger: true },
       { type: 'separator' },
@@ -1595,6 +1611,7 @@ function App() {
   const handleContextAction = useCallback((id: string) => {
     closeContextMenu();
     if (id === 'ctx-select-all')   { selectAll(); return; }
+    if (id === 'ctx-brush')        { captureBrush(); return; }
     if (id === 'ctx-deselect')     { setSelection(null); return; }
     if (id === 'ctx-cut')          { cutSelection(); return; }
     if (id === 'ctx-copy')         { copySelection(); return; }
@@ -1657,7 +1674,7 @@ function App() {
       setSwatches((s) => s.filter((c) => c !== col));
       return;
     }
-  }, [closeContextMenu, selectAll, cutSelection, copySelection, pasteClipboard, deleteSelection, clearLayer, flipH, flipV, rotate90, frames, frameIdx, renameLayer, duplicateLayer, moveLayerUp, moveLayerDown, mergeDown, deleteLayer, duplicateFrame, duplicateLinkedFrame, linkLayerToPrevious, unlinkLayerAt, insertFrameAt, moveFrame, deleteFrame, deleteTag, updateTag]);
+  }, [closeContextMenu, selectAll, captureBrush, cutSelection, copySelection, pasteClipboard, deleteSelection, clearLayer, flipH, flipV, rotate90, frames, frameIdx, renameLayer, duplicateLayer, moveLayerUp, moveLayerDown, mergeDown, deleteLayer, duplicateFrame, duplicateLinkedFrame, linkLayerToPrevious, unlinkLayerAt, insertFrameAt, moveFrame, deleteFrame, deleteTag, updateTag]);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   // Placed here so saveFile / exportPng / openFile are already in scope.
@@ -1678,6 +1695,7 @@ function App() {
         if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
         if (k === 'z' &&  e.shiftKey) { e.preventDefault(); redo(); return; }
         if (k === 'a' && !e.shiftKey) { e.preventDefault(); selectAll(); return; }
+        if (k === 'b' && !e.shiftKey) { e.preventDefault(); captureBrush(); return; }
         if (k === 'c' && !e.shiftKey) { e.preventDefault(); copySelection(); return; }
         if (k === 'x' && !e.shiftKey) { e.preventDefault(); cutSelection(); return; }
         if (k === 'v' && !e.shiftKey) { e.preventDefault(); pasteClipboard(); return; }
@@ -1718,7 +1736,7 @@ function App() {
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [frames.length, saveFile, exportPng, exportGif, undo, redo, openFile, selectAll, copySelection, cutSelection, pasteClipboard, deleteSelection]);
+  }, [frames.length, saveFile, exportPng, exportGif, undo, redo, openFile, selectAll, copySelection, cutSelection, pasteClipboard, deleteSelection, captureBrush]);
 
   const setTweak = (k: TweakKey, v: unknown) => {
     if (k === 'rightPaneStart') setRightTab(v as RightTab);
