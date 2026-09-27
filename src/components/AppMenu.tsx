@@ -91,6 +91,9 @@ const MENU: Record<string, MenuSection[]> = {
     { group: 'canvas', items: [
       { id: 'resize',  label: 'Resize canvas…',             keys: '' },
       { id: 'crop',    label: 'Crop to selection',          keys: '' },
+      { id: 'trim',    label: 'Trim canvas to the art',     keys: '' },
+      { id: 'fx-outline', label: 'Outline…',                keys: '' },
+      { id: 'fx-shadow',  label: 'Drop shadow…',            keys: '' },
       { id: 'flip-h',  label: 'Flip horizontal',            keys: '' },
       { id: 'flip-v',  label: 'Flip vertical',              keys: '' },
       { id: 'rotate-cw',  label: 'Rotate 90° clockwise',        keys: '' },
