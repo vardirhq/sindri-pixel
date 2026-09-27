@@ -58,6 +58,14 @@ jobs:
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
       - name: Test Rust
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Upload command-line exporter
+        # `pnpm check` built it: one Node script, attached to the release
+        # beside the installers (run it with `node sindri-pixel.mjs`).
+        uses: actions/upload-artifact@v4
+        with:
+          name: sindri-pixel-cli
+          path: dist-cli/sindri-pixel.mjs
+          if-no-files-found: error
 
   package:
     needs: quality

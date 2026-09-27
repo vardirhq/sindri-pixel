@@ -178,6 +178,19 @@ Tool options include brush size, pixel-perfect strokes, filled vs. outlined shap
 | **Sprite sheet** | All frames tiled into a single grid PNG with a configurable column count — ready to drop into a game engine. |
 | **Sindri** | Straight into a Sindri engine project: texture + `.sheet.json` + a prefab with the sprite and one animation clip per tag, or with a `sindri.tilemap` per tilemap layer. |
 
+### From the command line
+
+Every export also runs without opening the app, for build scripts and CI. The command is a single Node script (Node 20+), `sindri-pixel.mjs`, attached to each release; from a checkout, `pnpm build:cli` builds it and `pnpm cli` runs it.
+
+```sh
+node sindri-pixel.mjs export hero.spr --format png,gif,sheet --scale 4 --out build/
+node sindri-pixel.mjs export art/ --sindri ../game/assets     # a whole folder, straight into a Sindri project
+node sindri-pixel.mjs export hero.spr --format sheet --tag run
+node sindri-pixel.mjs info hero.spr
+```
+
+Formats are `png` (`--frame n` or `--frame all`), `gif`, `sheet` (with Aseprite JSON), `sindri` (with tilemap layers as a `-map` prefab) and `tiled` (`.tmj` + tileset). The command uses the same exporters as the app, so the files are identical. It exits non-zero if any file fails, after reporting every failure.
+
 Projects save to a `.spr` file — a plain, human-readable JSON document describing frames, layers, and palette, so your work is never locked behind a binary format.
 
 The format is versioned from `v1`. Current releases still open the original unversioned `.spr` files and save them back in the versioned form. Files created by a newer unsupported format version are rejected rather than guessed at or partially loaded.

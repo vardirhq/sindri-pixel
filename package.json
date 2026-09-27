@@ -4,14 +4,19 @@
   "private": true,
   "packageManager": "pnpm@10.30.3",
   "type": "module",
+  "bin": {
+    "sindri-pixel": "dist-cli/sindri-pixel.mjs"
+  },
   "scripts": {
     "dev": "vite",
     "dev:web": "vite --config vite.config.web.ts",
     "build": "tsc && vite build",
     "build:web": "tsc && vite build --config vite.config.web.ts",
+    "build:cli": "vite build --config vite.config.cli.ts",
+    "cli": "node dist-cli/sindri-pixel.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "pnpm test && pnpm build && vite build --config vite.config.web.ts",
+    "check": "pnpm test && pnpm build && vite build --config vite.config.web.ts && vite build --config vite.config.cli.ts",
     "preview": "vite preview",
     "tauri": "node scripts/tauri.mjs",
     "tauri:build": "pnpm tauri build"
@@ -27,6 +32,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/node": "^22.20.4",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@vitejs/plugin-react": "^4",
