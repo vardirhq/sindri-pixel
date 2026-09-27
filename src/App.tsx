@@ -24,6 +24,7 @@ import { getRecents, pushRecent, getSavedTemplates, saveTemplate, readAutosave, 
 import type { RecentFile, SavedTemplate, AutosaveSnapshot } from './lib/storage';
 import { IS_TAURI, downloadBytes, downloadText, pickFile, encodePngInBrowser, decodePngInBrowser } from './lib/platform';
 import { parseProject, serializeProject } from './lib/project-format';
+import { duplicateLinked, independentLayers, linkSize, linkToPrevious, propagateFrame, pruneLinks, unlinkLayer, writeLayerPixels } from './lib/cels';
 import { buildSpriteSheet, compositeFrame as compositeSpriteFrame, frameFromPackedPixels } from './lib/sprite';
 import { ImportAiArtDialog } from './components/import/ImportAiArtDialog';
 import type { AiArtImportResult } from './components/import/ImportAiArtDialog';
@@ -644,16 +645,9 @@ function App() {
     return () => clearTimeout(id);
   }, [isPlaying, frames, frameIdx, centerTab]);
 
+  // Linked cels: the write reaches every layer sharing this one's drawing.
   const updateActiveLayerPixels = useCallback((newPixels: (string | null)[][]) => {
-    setFrames((fs) => {
-      const next = fs.slice();
-      const frame = { ...next[frameIdx] };
-      const layers = frame.layers.slice();
-      layers[activeLayerIdx] = { ...layers[activeLayerIdx], pixels: newPixels };
-      frame.layers = layers;
-      next[frameIdx] = frame;
-      return next;
-    });
+    setFrames((fs) => writeLayerPixels(fs, frameIdx, activeLayerIdx, newPixels));
   }, [frameIdx, activeLayerIdx]);
 
   // ── Clipboard operations ───────────────────────────────────────────────────
@@ -751,10 +745,9 @@ function App() {
       const layers = frame.layers.slice();
       const src = layers[idx];
       const copy = {
-        ...src,
+        ...independentLayers([src])[0],
         id: `${src.id}_dup_${Date.now()}`,
         name: src.name + ' copy',
-        pixels: src.pixels.map((r) => r.slice()),
       };
       layers.splice(idx + 1, 0, copy);
       frame.layers = layers;
@@ -854,25 +847,25 @@ function App() {
   const flipH = useCallback(() => {
     if (transformSelection((rx, ry, w) => [w - 1 - rx, ry])) return;
     pushHistory();
-    setFrames((fs) => fs.map((f, i) => (i !== frameIdx ? f : {
+    setFrames((fs) => propagateFrame(fs.map((f, i) => (i !== frameIdx ? f : {
       ...f,
       layers: f.layers.map((l) => ({
         ...l,
         pixels: l.pixels.map((row) => row.slice().reverse()),
       })),
-    })));
+    })), frameIdx));
   }, [transformSelection, pushHistory, frameIdx]);
 
   const flipV = useCallback(() => {
     if (transformSelection((rx, ry, _w, h) => [rx, h - 1 - ry])) return;
     pushHistory();
-    setFrames((fs) => fs.map((f, i) => (i !== frameIdx ? f : {
+    setFrames((fs) => propagateFrame(fs.map((f, i) => (i !== frameIdx ? f : {
       ...f,
       layers: f.layers.map((l) => ({
         ...l,
         pixels: l.pixels.slice().reverse(),
       })),
-    })));
+    })), frameIdx));
   }, [transformSelection, pushHistory, frameIdx]);
 
   // Rotate 90°. Selections rotate in place around the bounding-box center
@@ -974,7 +967,7 @@ function App() {
       if (frame.layers.length <= 1) return fs;
       frame.layers = frame.layers.filter((_, i) => i !== idx);
       next[frameIdx] = frame;
-      return next;
+      return pruneLinks(next);
     });
     setActiveLayerIdx((i) => Math.max(0, i - 1));
   };
@@ -1015,11 +1008,12 @@ function App() {
         row.map((c, x) => (top.visible && top.pixels[y][x]) || c)
       );
       const layers = frame.layers.slice();
-      layers[activeLayerIdx - 1] = { ...bot, pixels: merged };
+      // The merge belongs to this frame alone, so the result is unlinked.
+      layers[activeLayerIdx - 1] = { ...independentLayers([bot])[0], pixels: merged };
       layers.splice(activeLayerIdx, 1);
       frame.layers = layers;
       next[frameIdx] = frame;
-      return next;
+      return pruneLinks(next);
     });
     setActiveLayerIdx((i) => Math.max(0, i - 1));
   };
@@ -1052,11 +1046,7 @@ function App() {
       const copy: Frame = {
         id: `frame_${Date.now()}`,
         duration: src.duration,
-        layers: src.layers.map((L) => ({
-          ...L,
-          id: `${L.id}_${Date.now()}`,
-          pixels: L.pixels.map((r) => r.slice()),
-        })),
+        layers: independentLayers(src.layers).map((L) => ({ ...L, id: `${L.id}_${Date.now()}` })),
       };
       const next = fs.slice();
       next.splice(idx + 1, 0, copy);
@@ -1068,8 +1058,26 @@ function App() {
   const deleteFrame = (idx: number) => {
     if (frames.length <= 1) return;
     pushHistory();
-    setFrames((fs) => fs.filter((_, i) => i !== idx));
+    setFrames((fs) => pruneLinks(fs.filter((_, i) => i !== idx)));
     setFrameIdx((i) => Math.max(0, Math.min(i, frames.length - 2)));
+  };
+
+  // ── Linked cels ────────────────────────────────────────────────────────────
+  const duplicateLinkedFrame = (idx: number) => {
+    pushHistory();
+    const stamp = Date.now();
+    setFrames((fs) => duplicateLinked(fs, idx, { frame: `frame_${stamp}`, layer: (k) => `f${stamp}_l${k}` }));
+    setFrameIdx(idx + 1);
+  };
+
+  const linkLayerToPrevious = (idx: number) => {
+    pushHistory();
+    setFrames((fs) => linkToPrevious(fs, idx, activeLayerIdx));
+  };
+
+  const unlinkLayerAt = (idx: number) => {
+    pushHistory();
+    setFrames((fs) => unlinkLayer(fs, idx, activeLayerIdx));
   };
 
   // Set the duration of the current frame only.
@@ -1469,18 +1477,29 @@ function App() {
   }, [frames, frameIdx]);
 
   const openFrameContextMenu = useCallback((idx: number, x: number, y: number) => {
+    // Cel actions apply to the active layer's cel in this frame.
+    const layer = frames[idx]?.layers[activeLayerIdx];
+    const prev = frames[idx - 1]?.layers[activeLayerIdx];
+    const layerName = layer?.name ?? 'layer';
+    const linked = linkSize(frames, layer);
+    const canLink = !!layer && !!prev && !(layer.link && layer.link === prev.link);
     const items: ContextItem[] = [
       { type: 'action', id: `ctx-frame-dup:${idx}`,        label: 'Duplicate frame' },
+      { type: 'action', id: `ctx-frame-dup-linked:${idx}`, label: 'Duplicate as linked frame' },
       { type: 'action', id: `ctx-frame-insert-before:${idx}`, label: 'Insert frame before' },
       { type: 'action', id: `ctx-frame-insert-after:${idx}`,  label: 'Insert frame after' },
       { type: 'separator' },
       { type: 'action', id: `ctx-frame-move-left:${idx}`,  label: 'Move frame left',  disabled: idx <= 0 },
       { type: 'action', id: `ctx-frame-move-right:${idx}`, label: 'Move frame right', disabled: idx >= frames.length - 1 },
       { type: 'separator' },
+      { type: 'separator' },
+      { type: 'action', id: `ctx-frame-link-prev:${idx}`, label: `Link “${layerName}” to previous frame`, disabled: !canLink },
+      { type: 'action', id: `ctx-frame-unlink:${idx}`,    label: linked > 1 ? `Unlink “${layerName}” (shared by ${linked} frames)` : `Unlink “${layerName}”`, disabled: linked < 2 },
+      { type: 'separator' },
       { type: 'action', id: `ctx-frame-delete:${idx}`,     label: 'Delete frame', disabled: frames.length <= 1, danger: true },
     ];
     setContextMenu({ x, y, items });
-  }, [frames.length]);
+  }, [frames, activeLayerIdx]);
 
   const openSwatchContextMenu = useCallback((swatchColor: string, x: number, y: number) => {
     const items: ContextItem[] = [
@@ -1530,6 +1549,9 @@ function App() {
     if (id.startsWith('ctx-layer-delete:')) { deleteLayer(parseInt(id.split(':')[1])); return; }
 
     if (id.startsWith('ctx-frame-dup:'))           { duplicateFrame(parseInt(id.split(':')[1])); return; }
+    if (id.startsWith('ctx-frame-dup-linked:'))    { duplicateLinkedFrame(parseInt(id.split(':')[1])); return; }
+    if (id.startsWith('ctx-frame-link-prev:'))     { linkLayerToPrevious(parseInt(id.split(':')[1])); return; }
+    if (id.startsWith('ctx-frame-unlink:'))        { unlinkLayerAt(parseInt(id.split(':')[1])); return; }
     if (id.startsWith('ctx-frame-insert-before:')) { insertFrameAt(parseInt(id.split(':')[1])); return; }
     if (id.startsWith('ctx-frame-insert-after:'))  { insertFrameAt(parseInt(id.split(':')[1]) + 1); return; }
     if (id.startsWith('ctx-frame-move-left:'))     { const i = parseInt(id.split(':')[1]); moveFrame(i, i - 1); return; }
@@ -1546,7 +1568,7 @@ function App() {
       setSwatches((s) => s.filter((c) => c !== col));
       return;
     }
-  }, [closeContextMenu, selectAll, cutSelection, copySelection, pasteClipboard, deleteSelection, clearLayer, flipH, flipV, rotate90, frames, frameIdx, renameLayer, duplicateLayer, moveLayerUp, moveLayerDown, mergeDown, deleteLayer, duplicateFrame, insertFrameAt, moveFrame, deleteFrame]);
+  }, [closeContextMenu, selectAll, cutSelection, copySelection, pasteClipboard, deleteSelection, clearLayer, flipH, flipV, rotate90, frames, frameIdx, renameLayer, duplicateLayer, moveLayerUp, moveLayerDown, mergeDown, deleteLayer, duplicateFrame, duplicateLinkedFrame, linkLayerToPrevious, unlinkLayerAt, insertFrameAt, moveFrame, deleteFrame]);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   // Placed here so saveFile / exportPng / openFile are already in scope.
