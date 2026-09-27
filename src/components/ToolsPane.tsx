@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import type { Tool, ToolOptions, Modifiers, LeftTab, SymmetryMode } from '../types';
 import {
-  IconPencil, IconEraser, IconFill, IconPicker,
+  IconPencil, IconEraser, IconShade, IconFill, IconPicker,
   IconLine, IconRect, IconCircle, IconMarquee,
   IconWand, IconLasso, IconMove, IconPan,
   IconAxis, IconSide, IconIso,
@@ -20,7 +20,7 @@ interface ToolsPaneProps {
   onModifierToggle: (key: keyof Modifiers) => void;
   onSymmetryChange: (mode: SymmetryMode) => void;
   toolOptions: ToolOptions;
-  onToolOptionChange: (key: keyof ToolOptions, value: number | boolean) => void;
+  onToolOptionChange: (key: keyof ToolOptions, value: ToolOptions[keyof ToolOptions]) => void;
   activeTab: LeftTab;
   onTabChange: (tab: LeftTab) => void;
 }
@@ -129,6 +129,7 @@ const tpStyles = {
 const TOOLS: Array<{ id: Tool; Ico: React.FC<{ size?: number }>; label: string; key: string; desc: string }> = [
   { id: 'pencil',  Ico: IconPencil,  label: 'Pencil',     key: 'P', desc: 'Paint pixel-by-pixel. Hold Shift to constrain to straight lines.' },
   { id: 'eraser',  Ico: IconEraser,  label: 'Eraser',     key: 'E', desc: 'Erase pixels to transparent on the active layer.' },
+  { id: 'shade',   Ico: IconShade,   label: 'Shade',      key: 'D', desc: 'Drag over pixels to step them one shade lighter or darker along their colour ramp, found from the palette. Hold Shift to reverse.' },
   { id: 'fill',    Ico: IconFill,    label: 'Fill',       key: 'G', desc: 'Flood-fill the contiguous region matching the picked pixel.' },
   { id: 'picker',  Ico: IconPicker,  label: 'Eyedropper', key: 'I', desc: 'Sample any pixel under the cursor into the active color.' },
   { id: 'line',    Ico: IconLine,    label: 'Line',       key: 'L', desc: 'Draw a 1px line. Hold Shift for 0°/45°/90°.' },
@@ -388,9 +389,31 @@ export function ToolsPane({
         <PixelSlider min={0} max={100} value={toolOptions.threshold} onChange={v => onToolOptionChange('threshold', v)} snap={10} />
       </div>
 
+      {tool === 'shade' && (
+        <>
+          <div style={{ ...tpStyles.modRow, cursor: 'default' }}>
+            <span style={tpStyles.modName}>Shade</span>
+          </div>
+          <div style={tpStyles.helperRow}>
+            {([
+              { id: 'darken', label: 'Darken' },
+              { id: 'lighten', label: 'Lighten' },
+            ] as const).map((m, i, arr) => (
+              <div
+                key={m.id}
+                style={tpStyles.helperBtn(toolOptions.shadeMode === m.id, i === 0, i === arr.length - 1)}
+                onClick={() => onToolOptionChange('shadeMode', m.id)}
+              >
+                <span style={tpStyles.helperLbl}>{m.label}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* Boolean options */}
-      {(['filled', 'perfectShapes', 'contiguous'] as const).map(key => {
-        const labels: Record<string, string> = { filled: 'Filled shapes', perfectShapes: 'Perfect shapes', contiguous: 'Contiguous fill' };
+      {(['pixelPerfect', 'filled', 'perfectShapes', 'contiguous'] as const).map(key => {
+        const labels: Record<string, string> = { pixelPerfect: 'Pixel-perfect strokes', filled: 'Filled shapes', perfectShapes: 'Perfect shapes', contiguous: 'Contiguous fill' };
         return (
           <div key={key} style={tpStyles.modRow} onClick={() => onToolOptionChange(key, !toolOptions[key])}>
             <span style={tpStyles.modName}>{labels[key]}</span>

@@ -63,6 +63,7 @@ export const IconSettings = (p: IconProps) => <Icon {...p}><circle cx="8" cy="8"
 
 // — tools (pixel editor) —
 export const IconPencil   = (p: IconProps) => <Icon {...p}><path d="M11 2 L14 5 L6 13 L2 14 L3 10 Z M10 3 L13 6"/></Icon>;
+export const IconShade    = (p: IconProps) => <Icon {...p}><path d="M2 14 L14 2 M2 2 H14 V14 H2 Z M6 14 V10 M10 14 V6 M14 10 H10"/></Icon>;
 export const IconEraser   = (p: IconProps) => <Icon {...p}><path d="M2 11 L8 5 L13 10 L9 14 H6 Z M5 8 L10 13"/></Icon>;
 export const IconFill     = (p: IconProps) => <Icon {...p}><path d="M2 8 L8 2 L14 8 L8 14 Z M14 11 C 14 13, 12 13, 12 11 C 12 10, 14 9, 14 11 Z"/></Icon>;
 export const IconPicker   = (p: IconProps) => <Icon {...p}><path d="M14 2 L13 1 L9 5 L7 4 L4 7 L9 12 L12 9 L11 7 L15 3 Z M3 13 L2 14"/></Icon>;

@@ -2,6 +2,7 @@ import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import { Frame, Layer, PixelGrid, Tool, ToolOptions, Modifiers, CenterTab } from '../types';
 import { ZOOM_LEVELS } from '../data';
 import { IconSparkle } from './Icons';
+import { makeShader, pixelPerfect, type Point } from '../lib/drawing';
 
 interface CanvasViewProps {
   frames: Frame[];
@@ -29,6 +30,8 @@ interface CanvasViewProps {
   canvasW: number;
   canvasH: number;
   onStrokeBegin?: () => void;
+  /** Project palette; the Shade tool finds colour ramps in it. */
+  palette?: string[];
   selection: { x0: number; y0: number; x1: number; y1: number; pixels?: [number, number][] } | null;
   onSelectionChange: (sel: { x0: number; y0: number; x1: number; y1: number; pixels?: [number, number][] } | null) => void;
   onContextMenu?: (x: number, y: number) => void;
@@ -39,6 +42,12 @@ type DragState = {
   lastX?: number;
   lastY?: number;
   draft?: PixelGrid;
+  // Freehand strokes (pencil, eraser, shade) redraw from the layer as it was
+  // when the stroke began, so pixel-perfect can take corners back out and
+  // shading steps each pixel once however often the stroke passes over it.
+  orig?: PixelGrid;
+  path?: Point[];
+  paint?: (x: number, y: number) => string | null | undefined;
   // Floating selection — set when move tool lifts selected pixels
   basePixels?: PixelGrid;              // layer with selected region cleared
   floatCols?: (string | null)[][];     // lifted pixel colors, [floatH][floatW]
@@ -184,7 +193,7 @@ export function CanvasView({
   onAcceptGhost, onRejectGhost, onRefineGhost,
   activeTab, onTabChange, isPlaying,
   zoomIdx, onZoomChange,
-  canvasW, canvasH, onStrokeBegin,
+  canvasW, canvasH, onStrokeBegin, palette = [],
   selection, onSelectionChange,
   onContextMenu,
 }: CanvasViewProps) {
@@ -497,18 +506,28 @@ export function CanvasView({
     return true;
   }, [selection, selectionSet]);
 
-  const setPixelInDraft = (draft: PixelGrid, x: number, y: number, col: string | null, opts: { size?: number; ignoreSelection?: boolean } = {}) => {
+  // `col` is a colour, null (erase), or a function giving each pixel's new
+  // value (undefined = leave it).
+  const setPixelInDraft = (
+    draft: PixelGrid, x: number, y: number,
+    col: string | null | ((px: number, py: number) => string | null | undefined),
+    opts: { size?: number; ignoreSelection?: boolean } = {},
+  ) => {
     const sz = opts.size ?? toolOptions.brushSize ?? 1;
+    const put = (px: number, py: number) => {
+      const v = typeof col === 'function' ? col(px, py) : col;
+      if (v !== undefined) draft[py][px] = v;
+    };
     const apply = (px: number, py: number) => {
       if (!opts.ignoreSelection && !isInSelection(px, py)) return;
       if (modifiers.tile) {
         // Tile: wrap coordinates (torus topology)
         const tx = ((px % canvasW) + canvasW) % canvasW;
         const ty = ((py % canvasH) + canvasH) % canvasH;
-        draft[ty][tx] = col;
+        put(tx, ty);
       } else {
         if (px < 0 || px >= canvasW || py < 0 || py >= canvasH) return;
-        draft[py][px] = col;
+        put(px, py);
       }
     };
     const r = Math.floor(sz / 2);
@@ -688,6 +707,14 @@ export function CanvasView({
     return inside;
   };
 
+  // Redraw a freehand stroke over the layer it started on.
+  const renderFreehand = (orig: PixelGrid, path: Point[], paint: NonNullable<DragState>['paint']) => {
+    const draft = orig.map((r) => r.slice());
+    const points = toolOptions.pixelPerfect && (toolOptions.brushSize ?? 1) === 1 ? pixelPerfect(path) : path;
+    for (const [px, py] of points) setPixelInDraft(draft, px, py, paint!);
+    return draft;
+  };
+
   const handleDown = (e: React.MouseEvent) => {
     if (activeTab !== 'editor' && activeTab !== 'split') return;
 
@@ -753,12 +780,28 @@ export function CanvasView({
       return;
     }
 
-    if (tool === 'pencil' || tool === 'eraser') {
+    if (tool === 'pencil' || tool === 'eraser' || tool === 'shade') {
       onStrokeBegin?.();
-      const draft = layer.pixels.map((r) => r.slice());
-      setPixelInDraft(draft, x, y, tool === 'eraser' ? null : color);
-      onPixelsChange(draft);
-      setDrag({ tool, lastX: x, lastY: y, draft });
+      const orig = layer.pixels;
+      let paint: NonNullable<DragState>['paint'];
+      if (tool === 'shade') {
+        // Ramps come from the palette plus every colour already in the frame.
+        const colors = new Set(palette);
+        for (const L of frame.layers) for (const row of L.pixels) for (const c of row) if (c) colors.add(c);
+        const shader = makeShader(colors);
+        const base = toolOptions.shadeMode ?? 'darken';
+        const dir = e.shiftKey ? (base === 'darken' ? 'lighten' : 'darken') : base;
+        paint = (px, py) => {
+          const c = orig[py][px];
+          return c ? shader(c, dir) : undefined;
+        };
+      } else {
+        const value = tool === 'eraser' ? null : color;
+        paint = () => value;
+      }
+      const path: Point[] = [[x, y]];
+      onPixelsChange(renderFreehand(orig, path, paint));
+      setDrag({ tool, lastX: x, lastY: y, orig, path, paint });
 
     } else if (tool === 'line' || tool === 'rect' || tool === 'circle') {
       onStrokeBegin?.();
@@ -862,16 +905,15 @@ export function CanvasView({
 
     if (!drag) return;
 
-    if (drag.tool === 'pencil' || drag.tool === 'eraser') {
-      const draft = drag.draft!;
+    if (drag.tool === 'pencil' || drag.tool === 'eraser' || drag.tool === 'shade') {
       // Clamp the target pixel to canvas bounds so that dragging outside and
       // re-entering doesn't draw a long diagonal line across the canvas.
       const cx = Math.max(0, Math.min(canvasW - 1, x));
       const cy = Math.max(0, Math.min(canvasH - 1, y));
-      const segs = linePixels(drag.lastX!, drag.lastY!, cx, cy);
-      segs.forEach(([px, py]) => setPixelInDraft(draft, px, py, drag.tool === 'eraser' ? null : color));
-      onPixelsChange(draft);
-      setDrag({ ...drag, lastX: cx, lastY: cy });
+      if (cx === drag.lastX && cy === drag.lastY) return;
+      const path = drag.path!.concat(linePixels(drag.lastX!, drag.lastY!, cx, cy).slice(1));
+      onPixelsChange(renderFreehand(drag.orig!, path, drag.paint));
+      setDrag({ ...drag, lastX: cx, lastY: cy, path });
 
     } else if (drag.tool === 'line') {
       let x1 = x, y1 = y;
@@ -1146,7 +1188,7 @@ export function CanvasView({
     tool === 'pan' ? 'grab'
     : tool === 'move' ? 'move'
     : (tool === 'select' && hoverInSel) ? 'move'
-    : ({ pencil: 'crosshair', eraser: 'crosshair', fill: 'cell', picker: 'crosshair',
+    : ({ pencil: 'crosshair', eraser: 'crosshair', shade: 'crosshair', fill: 'cell', picker: 'crosshair',
          line: 'crosshair', rect: 'crosshair', circle: 'crosshair',
          select: 'crosshair', lasso: 'crosshair', wand: 'crosshair' } as Record<string, string>)[tool] ?? 'crosshair';
 
