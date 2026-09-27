@@ -70,7 +70,7 @@ export const STEP_PRESETS = [
   { value: 'custom_goal',       label: 'Custom step',       desc: 'Free-form lesson step.',         spotlightTarget: 'canvas' },
 ];
 
-const TOOLS_LIST: string[] = ['pencil', 'eraser', 'fill', 'picker', 'line', 'rect', 'circle', 'select', 'wand', 'lasso', 'move', 'pan'];
+const TOOLS_LIST: string[] = ['pencil', 'eraser', 'shade', 'fill', 'picker', 'line', 'rect', 'circle', 'select', 'wand', 'lasso', 'move', 'pan'];
 const SPOTLIGHT_TARGETS = ['canvas', 'toolbar', 'palette', 'layers', 'timeline'];
 
 export const DEMO_LESSON: BuilderLesson = {

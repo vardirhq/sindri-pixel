@@ -54,7 +54,7 @@ const TWEAKS = {
 const appStyles: Record<string, React.CSSProperties> = {
   root: {
     display: 'grid',
-    gridTemplateRows: '56px 1fr 28px',
+    gridTemplateRows: '56px minmax(0, 1fr) 28px',
     gridTemplateColumns: '260px 1fr 360px',
     gridTemplateAreas: '"topbar topbar topbar" "left center right" "status status status"',
     height: '100vh',
@@ -64,7 +64,7 @@ const appStyles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
   },
   rootCompact: {
-    gridTemplateRows: '52px 1fr 26px',
+    gridTemplateRows: '52px minmax(0, 1fr) 26px',
     gridTemplateColumns: '240px 1fr 340px',
   },
   topbar: { gridArea: 'topbar' },
@@ -165,6 +165,7 @@ const SHORTCUT_SECTIONS = [
   { title: 'Tools', rows: [
     { keys: 'P',  label: 'Pencil' },
     { keys: 'E',  label: 'Eraser' },
+    { keys: 'D',  label: 'Shade (⇧ reverses)' },
     { keys: 'G',  label: 'Fill' },
     { keys: 'I',  label: 'Color picker' },
     { keys: 'L',  label: 'Line' },
@@ -449,6 +450,8 @@ function App() {
     perfectShapes: true,
     contiguous: true,
     threshold: 32,
+    pixelPerfect: true,
+    shadeMode: 'darken',
   });
   const [modifiers, setModifiers] = useState<Modifiers>({ symmetry: 'off', tile: false });
   const [helper, setHelper] = useState<ViewHelper>(null);
@@ -1594,7 +1597,7 @@ function App() {
       if (e.key === ' ') { e.preventDefault(); setIsPlaying((p) => !p); return; }
       const key = e.key.toLowerCase();
       const map: Record<string, Tool> = {
-        p: 'pencil', e: 'eraser', g: 'fill', i: 'picker',
+        p: 'pencil', e: 'eraser', d: 'shade', g: 'fill', i: 'picker',
         l: 'line', r: 'rect', c: 'circle', v: 'select',
         w: 'wand', a: 'lasso', m: 'move', h: 'pan',
       };
@@ -1737,6 +1740,7 @@ function App() {
         )}
         <CanvasView
           frames={frames} frameIdx={frameIdx} activeLayerIdx={activeLayerIdx}
+          palette={swatches}
           tool={tool} color={color} toolOptions={toolOptions} modifiers={modifiers} helper={helper}
           showGrid={showGrid} showOnionSkin={showOnionSkin}
           ghost={ghostForViewport}
