@@ -63,6 +63,13 @@ Frontend (`src/`):
   `App.updateActiveLayerPixels` against the layer as it was at `pushHistory`),
   tile-size guessing, and tileset PNG + Tiled `.tmj` export. Has tests.
   `components/TilesPanel.tsx` is its UI under the selected layer.
+- `lib/sindriExport.ts` — export to the Sindri engine (sindri2, a sibling
+  repo): a texture, its `.sheet.json` and a `.prefab.json` (exactly one root
+  entity). Sprites get `sindri.sprite` + `sindri.animation.sprite` (a clip per
+  tag); tilemaps get `sindri.tilemap` per layer with flipped tiles baked,
+  since Sindri cells can't flip. Keep it in step with sindri2's
+  `SpriteSheetDocument`, `PrefabDocument`, `TilemapComponent` and
+  `SpriteAnimationComponent`. Has tests.
 - `lib/pixelReconstruction/` — reconstructs AI-generated rasters into true
   low-res sprites; `gridDetection.ts` is the core: it fits grid lines
   to the art's edges (so they follow drift and phase) and picks the cell size
@@ -109,6 +116,7 @@ Backend (`src-tauri/src/`):
 
 - `commands.rs` — Tauri commands invoked from the frontend:
   `read_sprite_file`, `write_sprite_file`, `write_palette_file`, `export_png`, `export_gif`,
+  `export_sindri` (texture + sheet + prefab into a Sindri assets folder),
   `import_png`. Registered in `lib.rs` via `generate_handler!`.
 - `lib.rs` / `main.rs` — app setup and entry point.
 - `tauri.conf.json` — window, bundle, and CSP config. The CSP is deliberately

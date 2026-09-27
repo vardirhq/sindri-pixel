@@ -175,6 +175,7 @@ Tool options include brush size, pixel-perfect strokes, filled vs. outlined shap
 | **PNG** | The current frame, encoded losslessly with an optional integer upscale (nearest-neighbor, so pixels stay crisp). |
 | **Animated GIF** | Every frame with its own per-frame delay, looping infinitely; transparent pixels are disposed to background so nothing ghosts across frames. *(Desktop only.)* |
 | **Sprite sheet** | All frames tiled into a single grid PNG with a configurable column count — ready to drop into a game engine. |
+| **Sindri** | Straight into a Sindri engine project: texture + `.sheet.json` + a prefab with the sprite and one animation clip per tag, or with a `sindri.tilemap` per tilemap layer. |
 
 Projects save to a `.spr` file — a plain, human-readable JSON document describing frames, layers, and palette, so your work is never locked behind a binary format.
 

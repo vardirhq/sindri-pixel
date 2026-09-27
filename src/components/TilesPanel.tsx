@@ -60,7 +60,10 @@ export interface TilesPanelProps {
   stampTile: number | null;
   onStampTile: (tile: number | null) => void;
   onSetTileSize: (size: { tw: number; th: number } | null) => void;
+  /** Tileset PNG + Tiled .tmj. */
   onExport: () => void;
+  /** Texture + sheet + prefab for the Sindri engine. */
+  onExportSindri: () => void;
 }
 
 export function TilesPanel(p: TilesPanelProps) {
@@ -128,8 +131,11 @@ export function TilesPanel(p: TilesPanelProps) {
         <div style={S.sub}>No tiles yet — draw in a {tm.tw}×{tm.th} cell and it becomes the first tile.</div>
       )}
       <div style={{ display: 'flex', gap: 6 }}>
+        <span role="button" data-export-sindri style={{ ...S.btn(true), flex: 1, opacity: unique ? 1 : 0.4 }} onClick={() => unique && p.onExportSindri()} title="Texture, sheet and a prefab with sindri.tilemap, into your Sindri project">
+          <IconDownload size={11} /> Sindri
+        </span>
         <span role="button" data-export-tilemap style={{ ...S.btn(false), flex: 1, opacity: unique ? 1 : 0.4 }} onClick={() => unique && p.onExport()} title="Tileset PNG + Tiled map (.tmj) for Godot, Unity, Phaser, Tiled">
-          <IconDownload size={11} /> Export map
+          <IconDownload size={11} /> Tiled
         </span>
         <span role="button" style={S.btn(false)} onClick={() => p.onSetTileSize(null)} title="Make this an ordinary layer again (the pixels stay)">
           <IconX size={10} />

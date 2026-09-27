@@ -70,6 +70,7 @@ const MENU: Record<string, MenuSection[]> = {
       { id: 'export-png', label: 'Export as PNG',           keys: '⌘E' },
       { id: 'export-gif', label: 'Export as animated GIF',  keys: '⇧⌘E' },
       { id: 'export-sheet', label: 'Export sprite sheet',   keys: '' },
+      { id: 'export-sindri', label: 'Export to Sindri…',    keys: '' },
     ]},
     { group: 'recent', items: [
       { id: 'recent-1', label: 'drone_idle.spr',            keys: '' },
