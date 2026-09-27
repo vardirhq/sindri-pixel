@@ -27,6 +27,12 @@ interface RightPaneProps {
   onAddSwatch: () => void;
   onSwatchContextMenu?: (color: string, x: number, y: number) => void;
   usedColors?: string[];
+  /** Recolour: `begin` once when the swatch editor opens (one undo step),
+   *  then `recolor` for each colour the picker passes through. */
+  onRecolorBegin?: () => void;
+  onRecolor?: (from: string, to: string) => void;
+  onImportPalette?: () => void;
+  onExportPalette?: (format: 'gpl' | 'hex' | 'pal') => void;
   frameIdx: number;
   frameCount: number;
   frameDuration: number;
@@ -60,6 +66,12 @@ interface PaletteTabProps {
   onAddSwatch: () => void;
   onSwatchContextMenu?: (color: string, x: number, y: number) => void;
   usedColors?: string[];
+  /** Recolour: `begin` once when the swatch editor opens (one undo step),
+   *  then `recolor` for each colour the picker passes through. */
+  onRecolorBegin?: () => void;
+  onRecolor?: (from: string, to: string) => void;
+  onImportPalette?: () => void;
+  onExportPalette?: (format: 'gpl' | 'hex' | 'pal') => void;
 }
 
 interface InspectorTabProps {
@@ -329,7 +341,68 @@ function LayersTab({
 
 // ── PaletteTab ───────────────────────────────────────────────────────────────
 
-function PaletteTab({ color, onColorChange, swatches, onAddSwatch, onSwatchContextMenu, usedColors }: PaletteTabProps) {
+// Double-clicking a swatch opens this: pick a new colour and every pixel of
+// the old one changes with it, in every frame and layer, live.
+function RecolorEditor({ from, current, uses, onPick, onDone }: {
+  from: string; current: string; uses: boolean; onPick: (to: string) => void; onDone: () => void;
+}) {
+  const [hex, setHex] = React.useState(current);
+  React.useEffect(() => { setHex(current); }, [current]);
+  return (
+    <div data-recolor style={{ margin: '0 16px 14px', padding: '10px 12px', border: '1px solid var(--rule-2)', background: 'var(--paper-2)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 11.5, color: 'var(--ink-3)' }}>
+        <span style={{ width: 14, height: 14, background: from, border: '1px solid var(--rule-2)' }} />
+        <span>→</span>
+        <span style={{ position: 'relative', width: 22, height: 22, background: current, border: '1px solid var(--ink-3)' }}>
+          <input
+            type="color"
+            aria-label="New colour"
+            value={current}
+            onChange={(e) => onPick(e.target.value)}
+            style={{ position: 'absolute', inset: -4, width: 'calc(100% + 8px)', height: 'calc(100% + 8px)', opacity: 0, cursor: 'pointer' }}
+          />
+        </span>
+        <input
+          type="text"
+          aria-label="New colour hex"
+          value={hex}
+          spellCheck={false}
+          onChange={(e) => {
+            setHex(e.target.value);
+            const v = e.target.value.startsWith('#') ? e.target.value : `#${e.target.value}`;
+            if (/^#[0-9a-fA-F]{6}$/.test(v)) onPick(v.toLowerCase());
+          }}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') onDone(); }}
+          style={{ ...rpStyles.hexInput, width: 76 }}
+        />
+        <span style={{ ...rpStyles.iconBtn, marginLeft: 'auto', width: 'auto', padding: '0 8px', fontSize: 11 }} onClick={onDone}>Done</span>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.45 }}>
+        {uses
+          ? 'Every pixel of this colour changes too, in every frame and layer. One undo reverts it.'
+          : 'Not used in the artwork yet: only the swatch changes.'}
+      </div>
+    </div>
+  );
+}
+
+function PaletteTab({
+  color, onColorChange, swatches, onAddSwatch, onSwatchContextMenu, usedColors,
+  onRecolorBegin, onRecolor, onImportPalette, onExportPalette,
+}: PaletteTabProps) {
+  // The swatch being recoloured: where it started, and its colour now.
+  const [editing, setEditing] = React.useState<{ from: string; current: string } | null>(null);
+  const startRecolor = (sw: string) => {
+    if (!onRecolor) return;
+    onRecolorBegin?.();
+    setEditing({ from: sw, current: sw });
+  };
+  const pick = (to: string) => {
+    if (!editing) return;
+    onRecolor?.(editing.current, to);
+    setEditing({ ...editing, current: to });
+  };
+  const inArt = (c: string) => !!usedColors?.some((u) => u.toLowerCase() === c.toLowerCase());
   const rgb = hexToRgb(color || '#000000');
   // Track the raw hex text so partial input doesn't paint invalid colors.
   const [hexDraft, setHexDraft] = React.useState(color);
@@ -397,6 +470,8 @@ function PaletteTab({ color, onColorChange, swatches, onAddSwatch, onSwatchConte
               key={i}
               style={rpStyles.swatch}
               onClick={() => onColorChange(sw)}
+              onDoubleClick={() => startRecolor(sw)}
+              title={`${sw} · double-click to recolour`}
               onContextMenu={e => { e.preventDefault(); onSwatchContextMenu?.(sw, e.clientX, e.clientY); }}
             >
               <div style={rpStyles.swatchInner(sw, active)} />
@@ -404,6 +479,29 @@ function PaletteTab({ color, onColorChange, swatches, onAddSwatch, onSwatchConte
           );
         })}
       </div>
+
+      {editing && (
+        <RecolorEditor
+          from={editing.from}
+          current={editing.current}
+          uses={inArt(editing.current)}
+          onPick={pick}
+          onDone={() => setEditing(null)}
+        />
+      )}
+      {(onImportPalette || onExportPalette) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px 14px', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-4)' }}>
+          {onImportPalette && <span role="button" style={{ cursor: 'pointer', color: 'var(--ink-3)' }} onClick={onImportPalette} title="Load a .gpl, .hex or .pal palette">import…</span>}
+          {onExportPalette && (
+            <>
+              <span>export</span>
+              {(['gpl', 'hex', 'pal'] as const).map((f) => (
+                <span key={f} role="button" style={{ cursor: 'pointer', color: 'var(--ink-3)' }} onClick={() => onExportPalette(f)} title={`Save the palette as .${f}`}>.{f}</span>
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Colors currently painted in the artwork */}
       {usedColors && usedColors.length > 0 && (
@@ -418,8 +516,9 @@ function PaletteTab({ color, onColorChange, swatches, onAddSwatch, onSwatchConte
                 key={sw}
                 style={rpStyles.swatch}
                 onClick={() => onColorChange(sw)}
+                onDoubleClick={() => startRecolor(sw)}
                 onContextMenu={e => { e.preventDefault(); onSwatchContextMenu?.(sw, e.clientX, e.clientY); }}
-                title={sw}
+                title={`${sw} · double-click to recolour everywhere`}
               >
                 <div style={rpStyles.swatchInner(sw, sw === color)} />
               </div>
@@ -594,6 +693,7 @@ export function RightPane({
   onSelectLayer, onAddLayer, onDeleteLayer, onToggleLayerVisible, onSetLayerOpacity, onMergeDown,
   onRenameLayer, onLayerContextMenu,
   color, onColorChange, swatches, onAddSwatch, onSwatchContextMenu, usedColors,
+  onRecolorBegin, onRecolor, onImportPalette, onExportPalette,
   frameIdx, frameCount, frameDuration, onSetFrameDuration, onApplyDurationToAll,
   canvasW, canvasH,
   proposal, onAcceptProposal, onRejectProposal, onRefineProposal,
@@ -650,6 +750,10 @@ export function RightPane({
             onAddSwatch={onAddSwatch}
             onSwatchContextMenu={onSwatchContextMenu}
             usedColors={usedColors}
+            onRecolorBegin={onRecolorBegin}
+            onRecolor={onRecolor}
+            onImportPalette={onImportPalette}
+            onExportPalette={onExportPalette}
           />
         )}
         {activeTab === 'inspector' && (
