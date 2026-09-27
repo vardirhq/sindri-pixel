@@ -112,7 +112,8 @@ const MENU: Record<string, MenuSection[]> = {
   help: [
     { group: 'learning', items: [
       { id: 'lessons',       label: 'Open lessons library', keys: '⇧⌘L' },
-      { id: 'create-lesson', label: 'Author a new lesson…', keys: '' },
+      { id: 'create-lesson', label: 'Make a new lesson…', keys: '' },
+      { id: 'my-lessons',    label: 'My lessons', keys: '' },
       { id: 'shortcuts',     label: 'Keyboard shortcuts',   keys: '⌘/' },
     ]},
     { group: 'about', items: [

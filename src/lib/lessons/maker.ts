@@ -229,7 +229,7 @@ export function draftToLesson(draft: MakerDraft, fromStep = 0): Lesson {
     version: LESSON_FORMAT_VERSION,
     id: draft.id,
     title: draft.title,
-    author: draft.author,
+    author: draft.author.trim() || 'Anonymous',
     difficulty: draft.difficulty,
     minutes: draft.minutes,
     summary: draft.summary,

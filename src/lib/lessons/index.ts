@@ -3,3 +3,4 @@ export { describeCheck, evaluate, evaluateStep, inFamily, stepDone, toolName } f
 export * from './maker';
 export { BUILTIN_LESSONS } from './builtin';
 export { validateLesson } from './validate';
+export * from './shelf';

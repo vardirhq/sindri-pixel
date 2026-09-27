@@ -44,7 +44,7 @@ Sindri Pixel is preparing its first cross-platform beta. Native Linux, macOS, an
 | 🔗 **Linked cels** | Frames can share a layer's drawing — duplicate a frame as linked, or link a layer to the previous frame — so parts that don't move are drawn and fixed once. |
 | 🎨 **Palette tools** | Double-click a swatch to recolour it everywhere, live, in one undo step. Import and export `.gpl`, `.hex` (Lospec) and `.pal` palettes. |
 | 🎓 **Lessons** | Hands-on tutorials inside the editor: each step spotlights what it's about, shows an example to trace, and checks your drawing live, moving on when you've got it. Your own sprite waits untouched. |
-| 🛠️ **Lesson maker** | Make lessons by doing them: record a step on the canvas and the maker turns it into goals, a highlighted area and an example to trace. Play from any step, and clear your own lesson before you can share it. |
+| 🛠️ **Lesson maker** | Make lessons by doing them: record a step on the canvas and the maker turns it into goals, a highlighted area and an example to trace. Play from any step, and clear your own lesson before you can share it. Your lessons live on a *My lessons* shelf, and lessons people share with you import into the library. |
 | ⌨️ **Command palette + shortcuts** | `⌘K` fuzzy command palette and a complete keyboard map for tools, files, view, and timeline. |
 | 💾 **Autosave & crash recovery** | Work is continuously snapshotted; reopen after a crash and pick up exactly where you left off. |
 | 📚 **Interactive lessons** | A built-in tutorial library with a guided player *and* an authoring mode to build your own lessons. |
@@ -201,7 +201,7 @@ sindri-pixel/
 │   │   ├── Timeline.tsx      # frames, per-frame timing, playback
 │   │   ├── CmdK.tsx          # ⌘K command palette
 │   │   ├── Tutorial.tsx      # lesson library, player & spotlight overlay
-│   │   ├── BuilderPanes.tsx  # lesson authoring mode
+│   │   ├── maker/            # lesson maker: panel, course strip, maker bar
 │   │   └── Welcome.tsx       # welcome screen, new-project wizard, recovery
 │   ├── lib/
 │   │   ├── pixelReconstruction/ # AI raster → true low-res sprite (grid fitting, palette)

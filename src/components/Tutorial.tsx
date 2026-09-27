@@ -1,19 +1,46 @@
 import React from 'react';
 import type { SpotlightRect } from '../types';
-import type { CheckResult, Lesson } from '../lib/lessons';
-import { IconX, IconSearch, IconPlus, IconCheck } from './Icons';
+import type { CheckResult, Lesson, MakerDraft } from '../lib/lessons';
+import { IconX, IconSearch, IconPlus, IconCheck, IconPlay, IconCopy, IconTrash, IconFolder, IconPencil } from './Icons';
+import './maker/maker.css';
 
 // ---------------------------------------------------------------------------
 // Prop interfaces
 // ---------------------------------------------------------------------------
 
+export type LibraryTab = 'all' | 'todo' | 'done' | 'mine';
+
+export interface LibraryNotice {
+  kind: 'ok' | 'error';
+  text: string;
+}
+
 export interface TutorialLibraryProps {
   open: boolean;
+  /** The built-in lessons. */
   lessons: Lesson[];
+  /** Lessons people shared, imported from .sindri-lesson files. */
+  imported?: Lesson[];
   completed: string[];
+  /** The lessons this person is making (the "My lessons" shelf). */
+  drafts?: MakerDraft[];
+  /** The tab to show when the library opens. */
+  initialTab?: LibraryTab;
+  /** The lesson just imported (its card is marked new). */
+  freshId?: string | null;
+  notice?: LibraryNotice | null;
   onClose: () => void;
   onStart: (lesson: Lesson) => void;
   onAuthor?: () => void;
+  onEditDraft?: (draft: MakerDraft) => void;
+  onPlayDraft?: (draft: MakerDraft) => void;
+  onCopyDraft?: (draft: MakerDraft) => void;
+  onDeleteDraft?: (id: string) => void;
+  /** Pick a .sindri-lesson file to import. */
+  onImport?: () => void;
+  /** A file dropped on the library. */
+  onImportFile?: (file: File) => void;
+  onRemoveImported?: (id: string) => void;
 }
 
 /** Where the learner is: the intro card, a step, or the finish card. */
@@ -159,26 +186,85 @@ function coverOf(l: Lesson): (string | null)[][] {
 // TutorialLibrary
 // ---------------------------------------------------------------------------
 
-export function TutorialLibrary({ open, lessons, completed, onClose, onStart, onAuthor }: TutorialLibraryProps) {
-  const [tab, setTab] = React.useState<'all' | 'todo' | 'done'>('all');
+/** A draft's card art: its latest example, else its starting canvas. */
+function draftCover(d: MakerDraft): (string | null)[][] {
+  return [...d.steps].reverse().find((s) => s.example)?.example ?? d.start.frames[0]?.layers[0]?.pixels ?? [[null]];
+}
+
+function ago(t: number): string {
+  const min = Math.round((Date.now() - t) / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `${h} h ago`;
+  return `${Math.round(h / 24)} d ago`;
+}
+
+/** A small text action on a card (doesn't open the card). */
+function CardAction({ label, title, onClick, danger, children }: { label: string; title?: string; onClick: () => void; danger?: boolean; children?: React.ReactNode }) {
+  return (
+    <span
+      role="button"
+      data-card-action={label}
+      title={title ?? label}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className="mk-part"
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em', padding: '3px 6px', border: '1px solid var(--rule-2)', color: danger ? 'var(--red)' : 'var(--ink-3)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+    >
+      {children}{label}
+    </span>
+  );
+}
+
+export function TutorialLibrary({
+  open, lessons, imported = [], completed, drafts = [], initialTab = 'all', freshId, notice,
+  onClose, onStart, onAuthor, onEditDraft, onPlayDraft, onCopyDraft, onDeleteDraft, onImport, onImportFile, onRemoveImported,
+}: TutorialLibraryProps) {
+  const [tab, setTab] = React.useState<LibraryTab>(initialTab);
   const [query, setQuery] = React.useState('');
   const [hover, setHover] = React.useState<string | null>(null);
+  const [confirming, setConfirming] = React.useState<string | null>(null);
+  const [dropping, setDropping] = React.useState(false);
+
+  React.useEffect(() => { if (open) { setTab(initialTab); setConfirming(null); } }, [open, initialTab]);
+  // A lesson just imported shows where it landed.
+  React.useEffect(() => { if (freshId) { setTab('all'); setQuery(''); } }, [freshId]);
 
   if (!open) return null;
 
+  const sharedIds = new Set(imported.map((l) => l.id));
+  const all = [...imported, ...lessons];
   const isDone = (l: Lesson) => completed.includes(l.id);
-  const filtered = lessons.filter((l) => {
+  const q = query.trim().toLowerCase();
+  const matches = (title: string, summary: string) => !q || title.toLowerCase().includes(q) || summary.toLowerCase().includes(q);
+  const filtered = all.filter((l) => {
     if (tab === 'todo' && isDone(l)) return false;
     if (tab === 'done' && !isDone(l)) return false;
-    const q = query.trim().toLowerCase();
-    if (q && !l.title.toLowerCase().includes(q) && !l.summary.toLowerCase().includes(q)) return false;
-    return true;
+    return matches(l.title, l.summary);
   });
-  const todo = lessons.filter((l) => !isDone(l)).length;
+  const mine = drafts.filter((d) => matches(d.title, d.summary));
+  const todo = all.filter((l) => !isDone(l)).length;
+
+  const dropProps = onImportFile ? {
+    onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true); } },
+    onDragLeave: (e: React.DragEvent) => { if (e.currentTarget === e.target) setDropping(false); },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      setDropping(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) onImportFile(file);
+    },
+  } : {};
 
   return (
     <div style={tutStyles.scrim} onClick={onClose}>
-      <div style={tutStyles.dialog} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Lessons">
+      <div
+        style={{ ...tutStyles.dialog, ...(dropping ? { outline: '2px dashed var(--cyan)', outlineOffset: -6 } : null) }}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Lessons"
+        {...dropProps}
+      >
         <div style={tutStyles.dialogHead}>
           <div>
             <div style={tutStyles.dialogTitle}>Lessons</div>
@@ -187,57 +273,159 @@ export function TutorialLibrary({ open, lessons, completed, onClose, onStart, on
           <span style={tutStyles.dialogClose} onClick={onClose} title="Close"><IconX size={11} /></span>
         </div>
         <div style={tutStyles.tabs}>
-          <div style={tutStyles.tab(tab === 'all')} onClick={() => setTab('all')}>All<span style={tutStyles.tabBadge}>{lessons.length}</span></div>
-          <div style={tutStyles.tab(tab === 'todo')} onClick={() => setTab('todo')}>To do<span style={tutStyles.tabBadge}>{todo}</span></div>
-          <div style={tutStyles.tab(tab === 'done')} onClick={() => setTab('done')}>Done<span style={tutStyles.tabBadge}>{lessons.length - todo}</span></div>
+          <div style={tutStyles.tab(tab === 'all')} onClick={() => setTab('all')} data-tab="all">All<span style={tutStyles.tabBadge}>{all.length}</span></div>
+          <div style={tutStyles.tab(tab === 'todo')} onClick={() => setTab('todo')} data-tab="todo">To do<span style={tutStyles.tabBadge}>{todo}</span></div>
+          <div style={tutStyles.tab(tab === 'done')} onClick={() => setTab('done')} data-tab="done">Done<span style={tutStyles.tabBadge}>{all.length - todo}</span></div>
+          {onEditDraft && (
+            <div style={{ ...tutStyles.tab(tab === 'mine'), marginLeft: 'auto' }} onClick={() => setTab('mine')} data-tab="mine">
+              My lessons<span style={tutStyles.tabBadge}>{drafts.length}</span>
+            </div>
+          )}
         </div>
         <div style={tutStyles.searchRow}>
           <span style={{ color: 'var(--ink-4)' }}><IconSearch size={13} /></span>
-          <input style={tutStyles.searchInput} placeholder="Search lessons…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input style={tutStyles.searchInput} placeholder={tab === 'mine' ? 'Search my lessons…' : 'Search lessons…'} value={query} onChange={(e) => setQuery(e.target.value)} />
+          {onImport && (
+            <span
+              data-import-lesson
+              style={{ ...tutStyles.composeBtn, color: 'var(--ink-2)', border: '1px solid var(--rule-2)' }}
+              onClick={onImport}
+              title="Open a .sindri-lesson file someone shared (or drop one here)"
+            >
+              <IconFolder size={11} /> Import lesson…
+            </span>
+          )}
           {onAuthor && (
-            <span style={{ ...tutStyles.composeBtn, color: 'var(--ink)', border: '1px solid var(--rule-2)' }} onClick={() => { onClose(); onAuthor(); }}>
+            <span style={tutStyles.composeBtn} onClick={() => { onClose(); onAuthor(); }} data-new-lesson>
               <IconPlus size={11} /> New lesson
             </span>
           )}
         </div>
-        <div style={tutStyles.grid}>
-          {filtered.length === 0 && (
-            <div style={{ gridColumn: '1 / -1', padding: 32, background: 'var(--paper-2)', color: 'var(--ink-3)', fontSize: 13 }}>
-              {tab === 'done' ? 'No finished lessons yet — pick one from “To do”.' : 'No lessons match that search.'}
-            </div>
-          )}
-          {filtered.map((l) => (
-            <div
-              key={l.id}
-              data-lesson={l.id}
-              style={{ ...tutStyles.card, ...(hover === l.id ? tutStyles.cardHover : null) }}
-              onMouseEnter={() => setHover(l.id)}
-              onMouseLeave={() => setHover(null)}
-              onClick={() => onStart(l)}
-            >
-              <div style={tutStyles.cardCoverWrap}>
-                <CoverPreview pixels={coverOf(l)} size={96} />
-                {isDone(l) && <span style={tutStyles.completedBadge}>done</span>}
+        {notice && (
+          <div
+            data-library-notice={notice.kind}
+            role="status"
+            style={{ padding: '9px 24px', borderBottom: '1px solid var(--rule)', fontSize: 12, color: notice.kind === 'ok' ? 'var(--moss)' : 'var(--red)', background: 'var(--paper)' }}
+          >
+            {notice.text}
+          </div>
+        )}
+
+        {tab !== 'mine' && (
+          <div style={tutStyles.grid}>
+            {filtered.length === 0 && (
+              <div style={{ gridColumn: '1 / -1', padding: 32, background: 'var(--paper-2)', color: 'var(--ink-3)', fontSize: 13 }}>
+                {tab === 'done' ? 'No finished lessons yet — pick one from “To do”.' : 'No lessons match that search.'}
               </div>
-              <div style={tutStyles.cardBody}>
-                <div style={tutStyles.cardTitleBlock}>
-                  <div style={tutStyles.cardTitle}>{l.title}</div>
-                  <div style={tutStyles.cardSummary}>{l.summary}</div>
+            )}
+            {filtered.map((l) => {
+              const shared = sharedIds.has(l.id);
+              return (
+                <div
+                  key={l.id}
+                  data-lesson={l.id}
+                  data-shared={shared || undefined}
+                  className={l.id === freshId ? 'mk-stamp' : undefined}
+                  style={{ ...tutStyles.card, ...(hover === l.id ? tutStyles.cardHover : null) }}
+                  onMouseEnter={() => setHover(l.id)}
+                  onMouseLeave={() => { setHover(null); setConfirming(null); }}
+                  onClick={() => onStart(l)}
+                >
+                  <div style={tutStyles.cardCoverWrap}>
+                    <CoverPreview pixels={coverOf(l)} size={96} />
+                    {isDone(l) && <span style={tutStyles.completedBadge}>done</span>}
+                    {!isDone(l) && l.id === freshId && <span style={{ ...tutStyles.completedBadge, background: 'var(--cyan)' }}>new</span>}
+                  </div>
+                  <div style={tutStyles.cardBody}>
+                    <div style={tutStyles.cardTitleBlock}>
+                      <div style={tutStyles.cardTitle}>{l.title}</div>
+                      <div style={tutStyles.cardSummary}>{l.summary}</div>
+                    </div>
+                    <div style={{ flex: 1 }} />
+                    <div style={tutStyles.cardMeta}>
+                      <span style={tutStyles.difficulty(l.difficulty)}>{l.difficulty}</span>
+                      <span>{l.steps.length} steps</span>
+                      <span style={tutStyles.cardMetaDot} />
+                      <span>{l.minutes} min</span>
+                    </div>
+                    <div style={{ ...tutStyles.cardMeta, color: 'var(--ink-3)', justifyContent: 'space-between' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{shared ? `shared by ${l.author}` : l.author}</span>
+                      {shared && onRemoveImported && hover === l.id && (
+                        confirming === l.id
+                          ? <CardAction label="remove?" danger onClick={() => onRemoveImported(l.id)} />
+                          : <CardAction label="remove" title="Take this shared lesson off your shelf" onClick={() => setConfirming(l.id)} />
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div style={{ flex: 1 }} />
-                <div style={tutStyles.cardMeta}>
-                  <span style={tutStyles.difficulty(l.difficulty)}>{l.difficulty}</span>
-                  <span>{l.steps.length} steps</span>
-                  <span style={tutStyles.cardMetaDot} />
-                  <span>{l.minutes} min</span>
-                </div>
-                <div style={{ ...tutStyles.cardMeta, color: 'var(--ink-3)' }}>
-                  <span>{l.author}</span>
+              );
+            })}
+          </div>
+        )}
+
+        {tab === 'mine' && (
+          <div style={tutStyles.grid} data-my-lessons>
+            {onAuthor && !q && (
+              <div
+                data-new-lesson-card
+                style={{ ...tutStyles.card, gridTemplateColumns: '1fr', alignItems: 'center', justifyItems: 'center', textAlign: 'center', ...(hover === '__new' ? tutStyles.cardHover : null) }}
+                onMouseEnter={() => setHover('__new')}
+                onMouseLeave={() => setHover(null)}
+                onClick={() => { onClose(); onAuthor(); }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 44, height: 44, border: '1px dashed var(--amber)', color: 'var(--amber)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><IconPlus size={16} /></span>
+                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 14, color: 'var(--ink)' }}>Make a lesson</span>
+                  <span style={{ fontSize: 11.5, color: 'var(--ink-3)', lineHeight: 1.45, maxWidth: 220 }}>Press record, draw, press done — each thing you do becomes a step.</span>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            )}
+            {mine.length === 0 && (
+              <div style={{ gridColumn: onAuthor && !q ? 'span 2' : '1 / -1', padding: 32, background: 'var(--paper-2)', color: 'var(--ink-3)', fontSize: 13, lineHeight: 1.6 }}>
+                {q ? 'None of your lessons match that search.' : 'Lessons you make live here. Clear one — play it start to finish — and you can share it.'}
+              </div>
+            )}
+            {mine.map((d) => (
+              <div
+                key={d.id}
+                data-draft={d.id}
+                data-cleared={d.cleared || undefined}
+                style={{ ...tutStyles.card, ...(hover === d.id ? tutStyles.cardHover : null) }}
+                onMouseEnter={() => setHover(d.id)}
+                onMouseLeave={() => { setHover(null); setConfirming(null); }}
+                onClick={() => onEditDraft?.(d)}
+                title="Keep making this lesson"
+              >
+                <div style={tutStyles.cardCoverWrap}>
+                  <CoverPreview pixels={draftCover(d)} size={96} />
+                  {d.cleared
+                    ? <span style={{ ...tutStyles.completedBadge, background: 'var(--amber)', transform: 'rotate(-6deg)' }}>cleared</span>
+                    : <span style={{ ...tutStyles.completedBadge, background: 'var(--paper-4)', color: 'var(--ink-3)' }}>draft</span>}
+                </div>
+                <div style={tutStyles.cardBody}>
+                  <div style={tutStyles.cardTitleBlock}>
+                    <div style={tutStyles.cardTitle}>{d.title || 'Untitled lesson'}</div>
+                    <div style={tutStyles.cardSummary}>{d.summary || (d.cleared ? 'Cleared — ready to share.' : 'Play it start to finish to clear it.')}</div>
+                  </div>
+                  <div style={{ flex: 1 }} />
+                  <div style={tutStyles.cardMeta}>
+                    <span>{d.steps.length} step{d.steps.length === 1 ? '' : 's'}</span>
+                    <span style={tutStyles.cardMetaDot} />
+                    <span>edited {ago(d.updatedAt)}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', opacity: hover === d.id ? 1 : 0.55, transition: 'opacity 120ms' }}>
+                    <CardAction label="edit" onClick={() => onEditDraft?.(d)}><IconPencil size={9} /></CardAction>
+                    {!!d.steps.length && onPlayDraft && <CardAction label="play" title="Play it as a learner would" onClick={() => onPlayDraft(d)}><IconPlay size={9} /></CardAction>}
+                    {onCopyDraft && <CardAction label="copy" title="Make a copy to take somewhere new" onClick={() => onCopyDraft(d)}><IconCopy size={9} /></CardAction>}
+                    {onDeleteDraft && (confirming === d.id
+                      ? <CardAction label="delete?" danger title="Click again to delete for good" onClick={() => onDeleteDraft(d.id)}><IconTrash size={9} /></CardAction>
+                      : <CardAction label="delete" onClick={() => setConfirming(d.id)}><IconTrash size={9} /></CardAction>)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
