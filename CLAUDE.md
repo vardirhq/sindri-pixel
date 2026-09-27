@@ -30,7 +30,9 @@ Frontend:
 - `pnpm build` — `tsc && vite build`.
 - `pnpm dev:web` / `pnpm build:web` — the standalone web tool (see below),
   port 1421, output `dist-web/`.
-- `pnpm check` — tests + both bundles. **This is the CI quality gate for the
+- `pnpm build:cli` / `pnpm cli` — the command-line exporter (`src/cli/`,
+  `vite.config.cli.ts`), built to one Node script, `dist-cli/sindri-pixel.mjs`.
+- `pnpm check` — tests + all three bundles (app, web tool, command line). **This is the CI quality gate for the
   frontend; run it before pushing.**
 
 Desktop / Rust (all Cargo commands target `src-tauri/Cargo.toml`):
@@ -89,6 +91,10 @@ Frontend (`src/`):
   `components/maker/` is its UI (course strip, step inspector, maker bar). `shelf.ts` is the list logic for the *My lessons* shelf (drafts, and
   imported `.sindri-lesson` files, validated on the way in). `components/Tutorial.tsx` renders the library and the player
   lane; `App.tsx` puts the learner's sprite aside while a lesson runs.
+- `cli/` — `sindri-pixel export|info` for build scripts: `run.ts` (argument
+  parsing and every format, through the same `lib/` exporters as the app),
+  `png.ts` (a Node PNG encoder), `main.ts` (the entry). It must stay free of
+  React, the DOM and Tauri. Attached to releases by `release.yml`. Has tests.
 - `lib/platform.ts` — Tauri detection and web fallbacks (download/file-pick).
 - `lib/storage.ts` — persistence helpers.
 

@@ -4,6 +4,10 @@
 
 ### Added
 
+- **Command-line exporter.** `sindri-pixel export` turns `.spr` files, or whole folders of them, into PNG, GIF, sprite sheets with Aseprite JSON, Sindri engine assets and Tiled maps, without opening the app. Useful in build scripts and CI.
+  - Options: `--scale`, `--frame all`, `--tag <name>` (only that animation), `--columns`, `--out`, and `--sindri <assets folder>` to write straight into a Sindri project.
+  - `sindri-pixel info` describes a sprite: its size, frames, layers, tags and palette.
+  - It uses the same exporters as the app, so the output is identical. It is one Node script (Node 20+), attached to each release as `sindri-pixel.mjs`.
 - **Export to Sindri.** *Menu → Export to Sindri…* writes a sprite straight into a Sindri engine (sindri2) project. The desktop app asks for the project's assets folder once and remembers it; the browser downloads the files.
   - Three files, the way Sindri keeps art: `textures/<name>.png`, the `textures/<name>.sheet.json` that names its frames, and `prefabs/<name>.prefab.json` with the entity.
   - Frames are named by animation tag (`run-0`, `run-1`…). Each tag becomes a clip in `sindri.animation.sprite` (reverse and ping-pong tags play that way), the first clip plays, and `sindri.sprite` shows its first frame. A tag with mixed frame durations plays at their average, because a Sindri clip has one speed.
