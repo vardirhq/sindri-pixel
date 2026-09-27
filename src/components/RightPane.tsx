@@ -254,7 +254,7 @@ function LayersTab({
   };
 
   return (
-    <div>
+    <div data-spotlight="layers">
       <div style={rpStyles.layersHead}>
         <span style={rpStyles.sectionLabel}>Layers</span>
         <div style={rpStyles.iconBtnRow}>
@@ -462,7 +462,7 @@ function PaletteTab({
           <IconPlus size={12} />
         </span>
       </div>
-      <div style={rpStyles.palGrid}>
+      <div style={rpStyles.palGrid} data-spotlight="palette">
         {swatches.map((sw, i) => {
           const active = sw === color;
           return (

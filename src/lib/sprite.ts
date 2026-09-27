@@ -79,3 +79,18 @@ export function buildSpriteSheet(frames: Frame[], width: number, height: number,
 
   return { pixels: sheet, width: sheetWidth, height: sheetHeight };
 }
+
+/** The colour visible at each pixel (topmost visible layer), or null. */
+export function compositeGrid(frame: Frame | undefined, width: number, height: number): (string | null)[][] {
+  const out: (string | null)[][] = Array.from({ length: height }, () => Array(width).fill(null));
+  if (!frame) return out;
+  for (const layer of frame.layers) {
+    if (!layer.visible || layer.opacity <= 0) continue;
+    for (let y = 0; y < height; y++) {
+      const row = layer.pixels[y];
+      if (!row) continue;
+      for (let x = 0; x < width; x++) if (row[x]) out[y][x] = row[x];
+    }
+  }
+  return out;
+}

@@ -14,22 +14,23 @@ import type { ContextItem } from './components/ContextMenu';
 import { LoadingScreen, WelcomeScreen, NewProjectModal } from './components/Welcome';
 import type { TemplateConfig } from './components/Welcome';
 import { TutorialLibrary, TutorialPlayerLane, TutorialSpotlight, TutorialBuilderRibbon } from './components/Tutorial';
-import type { TutorialLesson } from './components/Tutorial';
-import { BuilderStepList, BuilderStepForm, DEMO_LESSON } from './components/BuilderPanes';
+import type { LessonPhase } from './components/Tutorial';
+import { BuilderStepList, BuilderStepForm, DEMO_LESSON, builderToLesson } from './components/BuilderPanes';
 import type { BuilderLesson } from './components/BuilderPanes';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { getRecents, pushRecent, getSavedTemplates, saveTemplate, readAutosave, writeAutosave, clearAutosave } from './lib/storage';
+import { getRecents, pushRecent, getSavedTemplates, saveTemplate, readAutosave, writeAutosave, clearAutosave, getCompletedLessons, markLessonCompleted } from './lib/storage';
 import type { RecentFile, SavedTemplate, AutosaveSnapshot } from './lib/storage';
 import { IS_TAURI, downloadBytes, downloadText, pickFile, encodePngInBrowser, decodePngInBrowser } from './lib/platform';
 import { parseProject, serializeProject } from './lib/project-format';
 import { brushFromSelection } from './lib/drawing';
+import { BUILTIN_LESSONS, evaluateStep, stepDone, toolName, type CheckResult, type EditorState, type Lesson } from './lib/lessons';
 import { readPalette, recolor, writePalette, type PaletteFormat } from './lib/palette';
 import { duplicateLinked, independentLayers, linkSize, linkToPrevious, propagateFrame, pruneLinks, unlinkLayer, writeLayerPixels } from './lib/cels';
 import { clampTags, freshTagName, nextPlayFrame, tagSequence, tagsAfterDelete, tagsAfterInsert, tagsAfterMove, validateTags, type FrameTag } from './lib/tags';
 import { gridSheet, sheetJson } from './lib/animation';
-import { buildSpriteSheet, compositeFrame as compositeSpriteFrame, frameFromPackedPixels } from './lib/sprite';
+import { buildSpriteSheet, compositeFrame as compositeSpriteFrame, frameFromPackedPixels, compositeGrid } from './lib/sprite';
 import { ImportAiArtDialog } from './components/import/ImportAiArtDialog';
 import type { AiArtImportResult } from './components/import/ImportAiArtDialog';
 import { imageToPackedPixels } from './lib/pixelReconstruction';
@@ -83,6 +84,34 @@ const appStyles: Record<string, React.CSSProperties> = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** The largest zoom step at which a w×h canvas fits the editor viewport. */
+function fitZoomIdx(w: number, h: number): number {
+  const vw = Math.max(100, window.innerWidth - 660);
+  const vh = Math.max(100, window.innerHeight - 360);
+  const fit = Math.floor(Math.min(vw / w, vh / h));
+  return ZOOM_LEVELS.reduce((best, z, i) => (z <= fit ? i : best), 0);
+}
+
+/** Everything a lesson replaces, kept aside so leaving it restores the
+ *  learner's own sprite exactly: pixels, palette, history and view. */
+interface LessonStash {
+  frames: Frame[];
+  w: number;
+  h: number;
+  swatches: string[];
+  tags: FrameTag[];
+  name: string;
+  path: string | null;
+  dirty: boolean;
+  past: HistorySnapshot[];
+  future: HistorySnapshot[];
+  frameIdx: number;
+  layerIdx: number;
+  onion: boolean;
+  symmetry: Modifiers['symmetry'];
+  zoomIdx: number;
+}
+
 interface HistorySnapshot {
   frames: Frame[];
   w: number;
@@ -119,23 +148,6 @@ function makeProposal(prompt: string): Proposal {
     ],
   };
 }
-
-// ---------------------------------------------------------------------------
-// Initial active lesson placeholder
-// ---------------------------------------------------------------------------
-
-const INITIAL_LESSON: TutorialLesson = {
-  id: 'outlines_101',
-  title: 'Pixel outlines 101',
-  author: 'sindri team',
-  difficulty: 'beginner',
-  time: '4 min',
-  steps: 3,
-  summary: '',
-  intro: '',
-  cover: { w: 12, h: 12, pixels: Array(12).fill(Array(12).fill(null)) },
-  completed: false,
-};
 
 // ---------------------------------------------------------------------------
 // TweakKey type
@@ -553,10 +565,18 @@ function App() {
   };
 
   const [tutorialMode, setTutorialMode] = useState<TutorialMode>(TWEAKS.tutorialMode as TutorialMode);
-  const [activeLesson, setActiveLesson] = useState<TutorialLesson>(INITIAL_LESSON);
+  // ── Lessons ──
+  // A lesson runs on its own canvas: the learner's sprite (and its undo
+  // history) is put aside when it starts and restored when it ends.
+  const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
+  const [lessonPhase, setLessonPhase] = useState<LessonPhase>('intro');
   const [lessonStepIdx, setLessonStepIdx] = useState(0);
-  const [showHint, setShowHint] = useState(false);
-  const [showAIHint, setShowAIHint] = useState(false);
+  const [showLessonExample, setShowLessonExample] = useState(true);
+  const [lessonNotice, setLessonNotice] = useState<string | null>(null);
+  const [completedLessons, setCompletedLessons] = useState<string[]>(() => getCompletedLessons());
+  // A play test from the builder returns to the builder, and isn't "done".
+  const [lessonReturnTo, setLessonReturnTo] = useState<'off' | 'authoring'>('off');
+  const lessonStashRef = useRef<LessonStash | null>(null);
   const canvasShellRef = useRef<HTMLDivElement>(null);
   const pastRef = useRef<HistorySnapshot[]>([]);
   const futureRef = useRef<HistorySnapshot[]>([]);
@@ -606,53 +626,44 @@ function App() {
     applySnapshot(next);
   }, [frames, canvasW, canvasH, tags, swatches, applySnapshot]);
 
+  // Spotlight: the panel (or canvas area) the current lesson step is about.
+  const lessonSpot = tutorialMode === 'playing' && activeLesson && lessonPhase === 'step'
+    ? activeLesson.steps[lessonStepIdx] ?? null : null;
   useEffect(() => {
-    if (tutorialMode !== 'playing') { setSpotlightRect(null); return; }
+    const target = lessonSpot?.spotlight;
+    if (!target) { setSpotlightRect(null); return; }
+    if (target === 'palette' || target === 'layers') setRightTab(target);
     const measure = () => {
-      const shell = canvasShellRef.current;
-      if (!shell) return;
-      const targetName = ['toolbar', 'canvas', 'toolbar'][lessonStepIdx] || 'canvas';
-      if (targetName === 'canvas') {
-        const board = shell.querySelector('[data-spotlight="canvas-board"]');
-        if (!board) return;
+      if (target === 'canvas') {
+        const shell = canvasShellRef.current;
+        const board = shell?.querySelector('[data-spotlight="canvas-board"]');
+        if (!shell || !board) return;
         const sb = shell.getBoundingClientRect();
         const bb = board.getBoundingClientRect();
-        const sprite = 32;
-        const scale = bb.width / sprite;
+        const scale = bb.width / canvasW;
+        const r = lessonSpot?.region ?? { x: 0, y: 0, w: canvasW, h: canvasH };
         setSpotlightRect({
           scope: 'center',
-          x: bb.left - sb.left + 6 * scale,
-          y: bb.top - sb.top + 4 * scale,
-          w: 16 * scale,
-          h: 10 * scale,
+          x: bb.left - sb.left + r.x * scale,
+          y: bb.top - sb.top + r.y * scale,
+          w: r.w * scale,
+          h: r.h * scale,
           calloutSide: 'right',
         });
-      } else {
-        const sel: Record<string, string> = {
-          toolbar: '[data-spotlight="toolbar"]',
-          palette: '[data-spotlight="palette"]',
-          layers: '[data-spotlight="layers"]',
-          timeline: '[data-spotlight="timeline"]',
-        };
-        const el = document.querySelector(sel[targetName]);
-        if (!el) return;
-        const r = el.getBoundingClientRect();
-        setSpotlightRect({
-          scope: 'viewport',
-          x: r.left,
-          y: r.top,
-          w: r.width,
-          h: r.height,
-          calloutSide: targetName === 'toolbar' ? 'right' : 'left',
-        });
+        return;
       }
+      const el = document.querySelector(`[data-spotlight="${target}"]`);
+      if (!el) { setSpotlightRect(null); return; }
+      const r = el.getBoundingClientRect();
+      setSpotlightRect({ scope: 'viewport', x: r.left, y: r.top, w: r.width, h: r.height, calloutSide: target === 'toolbar' ? 'right' : 'left' });
     };
-    measure();
+    // Measure after the tab switch and layout settle.
+    const raf = requestAnimationFrame(measure);
     const ro = new ResizeObserver(measure);
     if (canvasShellRef.current) ro.observe(canvasShellRef.current);
     window.addEventListener('resize', measure);
-    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
-  }, [tutorialMode, lessonStepIdx]);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [lessonSpot, canvasW, canvasH, zoomIdx]);
 
   const initialProposal: Proposal | null = TWEAKS.showProposalLane
     ? makeProposal('Add a damaged-burst frame to the drone idle so it has a death pose.')
@@ -1149,6 +1160,149 @@ function App() {
     setSwatches((s) => [...s, color]);
   };
 
+  // ── Lessons: start, leave, advance ─────────────────────────────────────────
+  const startLesson = useCallback((lesson: Lesson, opts: { startAt?: number; returnTo?: 'off' | 'authoring'; keepCanvas?: boolean } = {}) => {
+    if (!lessonStashRef.current) {
+      lessonStashRef.current = {
+        frames, w: canvasW, h: canvasH, swatches, tags, name: projectName, path: currentFilePath, dirty,
+        past: pastRef.current, future: futureRef.current, frameIdx, layerIdx: activeLayerIdx,
+        onion: showOnionSkin, symmetry: modifiers.symmetry, zoomIdx,
+      };
+    }
+    if (!opts.keepCanvas) {
+      const { w, h } = lesson.start;
+      const start: Frame[] = lesson.start.frames?.length
+        ? (JSON.parse(JSON.stringify(lesson.start.frames)) as Frame[]).map((f, i) => ({ ...f, id: `frame_${i}` }))
+        : [{ id: 'frame_0', duration: 140, layers: [{ id: 'lesson_l0', name: 'layer 1', visible: true, opacity: 1, pixels: Array.from({ length: h }, () => Array(w).fill(null)) }] }];
+      setFrames(start);
+      setCanvasW(w);
+      setCanvasH(h);
+      setTags([]);
+      setPlayTagId(null);
+      if (lesson.start.swatches?.length) setSwatches(lesson.start.swatches);
+      setProjectName(`${lesson.title}.spr`);
+      setCurrentFilePath(null);
+      setDirty(false);
+      pastRef.current = [];
+      futureRef.current = [];
+      setFrameIdx(0);
+      setActiveLayerIdx(0);
+      setShowOnionSkin(false);
+      setModifiers((m) => ({ ...m, symmetry: 'off' }));
+      setZoomIdx(fitZoomIdx(w, h));
+    }
+    setSelection(null);
+    setIsPlaying(false);
+    // Lessons are about drawing: keep the colours in reach.
+    setRightTab('palette');
+    setActiveLesson(lesson);
+    setLessonStepIdx(opts.startAt ?? 0);
+    setLessonPhase(opts.startAt !== undefined ? 'step' : 'intro');
+    setLessonNotice(null);
+    setShowLessonExample(true);
+    setLessonReturnTo(opts.returnTo ?? 'off');
+    setTutorialMode('playing');
+  }, [frames, canvasW, canvasH, swatches, tags, projectName, currentFilePath, dirty, frameIdx, activeLayerIdx, showOnionSkin, modifiers.symmetry, zoomIdx]);
+
+  // Put the learner's sprite back (every way out of a lesson comes here).
+  const restoreLessonStash = () => {
+    const s = lessonStashRef.current;
+    lessonStashRef.current = null;
+    setActiveLesson(null);
+    setIsPlaying(false);
+    setLessonNotice(null);
+    if (!s) return;
+    setFrames(s.frames);
+    setCanvasW(s.w);
+    setCanvasH(s.h);
+    setSwatches(s.swatches);
+    setTags(s.tags);
+    setPlayTagId(null);
+    setProjectName(s.name);
+    setCurrentFilePath(s.path);
+    setDirty(s.dirty);
+    pastRef.current = s.past;
+    futureRef.current = s.future;
+    setFrameIdx(Math.min(s.frameIdx, s.frames.length - 1));
+    setActiveLayerIdx(s.layerIdx);
+    setShowOnionSkin(s.onion);
+    setModifiers((m) => ({ ...m, symmetry: s.symmetry }));
+    setZoomIdx(s.zoomIdx);
+    setSelection(null);
+  };
+
+  const exitLesson = () => {
+    restoreLessonStash();
+    setTutorialMode(lessonReturnTo === 'authoring' ? 'authoring' : 'off');
+  };
+
+  const lessonStep = activeLesson && lessonPhase === 'step' ? activeLesson.steps[lessonStepIdx] ?? null : null;
+
+  // Live checks: what the current step asks, evaluated against the editor.
+  const lessonResults = useMemo<CheckResult[]>(() => {
+    if (!lessonStep) return [];
+    const sprite = (f: Frame | undefined) => compositeGrid(f, canvasW, canvasH);
+    const state: EditorState = {
+      tool, color,
+      frame: sprite(frames[frameIdx]),
+      allFrames: lessonStep.checks.some((c) => c.type === 'maxColors') ? frames.map(sprite) : [],
+      frameIndex: frameIdx,
+      frameCount: frames.length,
+      layerCount: frames[frameIdx]?.layers.length ?? 0,
+      tagCount: tags.length,
+      onion: showOnionSkin,
+      symmetry: modifiers.symmetry,
+      playing: isPlaying,
+    };
+    return evaluateStep(lessonStep, state);
+  }, [lessonStep, tool, color, frames, frameIdx, canvasW, canvasH, tags.length, showOnionSkin, modifiers.symmetry, isPlaying]);
+  const lessonStepComplete = stepDone(lessonResults);
+
+  const advanceLesson = useCallback(() => {
+    if (!activeLesson) return;
+    if (lessonStepIdx < activeLesson.steps.length - 1) {
+      setLessonStepIdx((i) => i + 1);
+      return;
+    }
+    setLessonPhase('outro');
+    setIsPlaying(false);
+    if (lessonReturnTo === 'off') {
+      markLessonCompleted(activeLesson.id);
+      setCompletedLessons(getCompletedLessons());
+    }
+  }, [activeLesson, lessonStepIdx, lessonReturnTo]);
+
+  // Advance by itself when a step's checks are met. Arriving at a step that
+  // is already met moves on too (the learner already has the pencil), except
+  // when they went back to it on purpose: then "Continue" is theirs to press.
+  const lessonArmedRef = useRef(false);
+  const lessonNavRef = useRef<'forward' | 'manual'>('forward');
+  useEffect(() => {
+    lessonArmedRef.current = lessonNavRef.current === 'forward' || !lessonStepComplete;
+    lessonNavRef.current = 'forward';
+    setLessonNotice(null);
+    // Put the learner on a tool the step allows.
+    if (lessonStep?.tools?.length && !lessonStep.tools.includes(tool)) setTool(lessonStep.tools[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonStepIdx, lessonPhase, activeLesson]);
+  useEffect(() => {
+    if (!lessonStepComplete) { lessonArmedRef.current = true; return; }
+    if (!lessonArmedRef.current) return;
+    const id = setTimeout(() => { lessonArmedRef.current = false; advanceLesson(); }, 900);
+    return () => clearTimeout(id);
+  }, [lessonStepComplete, advanceLesson]);
+
+  // Tools a step doesn't use are refused with a word about which it does.
+  const chooseTool = useCallback((t: Tool) => {
+    const allowed = tutorialMode === 'playing' ? lessonStep?.tools : null;
+    if (allowed?.length && !allowed.includes(t)) {
+      setLessonNotice(`This step uses the ${allowed.map(toolName).join(' or ')}.`);
+      return;
+    }
+    setLessonNotice(null);
+    setTool(t);
+  }, [tutorialMode, lessonStep]);
+
   // ── Palette: recolour everywhere, palette files ────────────────────────────
   // A recolour session (swatch editor open) is one undo step, however many
   // colours the picker passes through on the way.
@@ -1498,6 +1652,8 @@ function App() {
   // ── Autosave (crash recovery) ──────────────────────────────────────────────
   useEffect(() => {
     if (appStage !== 'editor') return;
+    // A lesson's canvas is not the learner's work: keep their recovery copy.
+    if (tutorialMode === 'playing') return;
     const id = setTimeout(() => {
       writeAutosave({
         savedAt: Date.now(),
@@ -1512,7 +1668,7 @@ function App() {
       });
     }, 1200);
     return () => clearTimeout(id);
-  }, [appStage, frames, canvasW, canvasH, projectName, swatches, tags, currentFilePath, dirty]);
+  }, [appStage, frames, canvasW, canvasH, projectName, swatches, tags, currentFilePath, dirty, tutorialMode]);
 
   const [recovery, setRecovery] = useState<AutosaveSnapshot | null>(() => {
     const snap = readAutosave();
@@ -1757,10 +1913,7 @@ function App() {
         if (k === '-') { e.preventDefault(); setZoomIdx((i) => Math.max(0, i - 1)); return; }
         if (k === '0') {
           e.preventDefault();
-          const vw = Math.max(100, window.innerWidth - 660);
-          const vh = Math.max(100, window.innerHeight - 360);
-          const fit = Math.floor(Math.min(vw / canvasW, vh / canvasH));
-          setZoomIdx(ZOOM_LEVELS.reduce((best, z, i) => (z <= fit ? i : best), 0));
+          setZoomIdx(fitZoomIdx(canvasW, canvasH));
           return;
         }
         if (k === '1') { e.preventDefault(); setZoomIdx(0); return; }
@@ -1778,7 +1931,7 @@ function App() {
         l: 'line', r: 'rect', c: 'circle', v: 'select',
         w: 'wand', a: 'lasso', m: 'move', h: 'pan',
       };
-      if (map[key] && !e.shiftKey) setTool(map[key]);
+      if (map[key] && !e.shiftKey) chooseTool(map[key]);
       if (key === 'g' && e.shiftKey) setShowGrid((v) => !v);
       if (key === 'o' && e.shiftKey) setShowOnionSkin((v) => !v);
       if (key === 'a' && e.shiftKey) setShowAiGhost((v) => !v);
@@ -1787,7 +1940,7 @@ function App() {
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [frames.length, saveFile, exportPng, exportGif, undo, redo, openFile, selectAll, copySelection, cutSelection, pasteClipboard, deleteSelection, captureBrush]);
+  }, [frames.length, saveFile, exportPng, exportGif, undo, redo, openFile, selectAll, copySelection, cutSelection, pasteClipboard, deleteSelection, captureBrush, chooseTool]);
 
   const setTweak = (k: TweakKey, v: unknown) => {
     if (k === 'rightPaneStart') setRightTab(v as RightTab);
@@ -1801,7 +1954,8 @@ function App() {
     }
     if (k === 'tutorialMode') {
       setTutorialMode(v as TutorialMode);
-      if (v === 'playing' || v === 'authoring') setShowAIHint(false);
+      // Leaving a lesson by any route gives the learner their sprite back.
+      if (tutorialMode === 'playing' && v !== 'playing') restoreLessonStash();
     }
   };
 
@@ -1897,7 +2051,8 @@ function App() {
           />
         ) : (
           <ToolsPane
-            tool={tool} onToolChange={setTool}
+            tool={tool} onToolChange={chooseTool}
+            allowedTools={tutorialMode === 'playing' ? lessonSpot?.tools ?? null : null}
             helper={helper} onHelperChange={(h) => setHelper(h as ViewHelper)}
             modifiers={modifiers}
             onModifierToggle={(k) => { if (k === 'tile') setModifiers((m) => ({ ...m, tile: !m.tile })); }}
@@ -1912,12 +2067,13 @@ function App() {
         {tutorialMode === 'authoring' && (
           <TutorialBuilderRibbon
             onExit={() => setTweak('tutorialMode', 'off')}
-            onPreview={() => setTweak('tutorialMode', 'playing')}
+            onPreview={() => startLesson(builderToLesson(draftLesson, canvasW, canvasH), { startAt: 0, returnTo: 'authoring', keepCanvas: true })}
           />
         )}
         <CanvasView
           frames={frames} frameIdx={frameIdx} activeLayerIdx={activeLayerIdx}
           palette={swatches}
+          trace={tutorialMode === 'playing' && showLessonExample && lessonSpot?.example && lessonSpot.example.length === canvasH ? lessonSpot.example : null}
           tool={tool} color={color} toolOptions={toolOptions} modifiers={modifiers} helper={helper}
           showGrid={showGrid} showOnionSkin={showOnionSkin}
           ghost={ghostForViewport}
@@ -1952,34 +2108,13 @@ function App() {
         {tutorialMode === 'playing' && spotlightRect && (
           <TutorialSpotlight
             targetRect={spotlightRect}
-            callout={{
-              stepIdx: lessonStepIdx,
-              text: ([
-                'Pick the pencil from the toolbar (P), then pick any dark ink from the palette.',
-                'Draw a closed outline inside the highlighted region.',
-                'Switch to fill (G), then click inside the closed cap outline.',
-              ] as string[])[lessonStepIdx] || '',
-            }}
+            callout={lessonSpot ? { stepIdx: lessonStepIdx, text: lessonSpot.title } : null}
           />
         )}
       </div>
 
       <div style={{ ...appStyles.right, position: 'relative', zIndex: tutorialMode === 'playing' ? 60 : 'auto' }}>
-        {tutorialMode === 'playing' ? (
-          <TutorialPlayerLane
-            lesson={activeLesson} stepIdx={lessonStepIdx}
-            onPrev={() => setLessonStepIdx((i) => Math.max(0, i - 1))}
-            onNext={() => {
-              if (lessonStepIdx >= activeLesson.steps - 1) setTweak('tutorialMode', 'off');
-              else setLessonStepIdx((i) => i + 1);
-            }}
-            onExit={() => setTweak('tutorialMode', 'off')}
-            onShowHint={() => setShowHint((v) => !v)}
-            onAskAI={() => setShowAIHint((v) => !v)}
-            hintVisible={showHint}
-            aiHintVisible={showAIHint}
-          />
-        ) : tutorialMode === 'authoring' ? (
+        {tutorialMode === 'authoring' ? (
           <BuilderStepForm
             lesson={draftLesson}
             step={draftLesson.steps[builderStepIdx]}
@@ -2000,14 +2135,30 @@ function App() {
               };
               setDraftLesson(next);
             }}
-            onPlayTest={() => {
-              setActiveLesson({ ...draftLesson, steps: draftLesson.steps.length } as unknown as TutorialLesson);
-              setLessonStepIdx(builderStepIdx);
-              setTweak('tutorialMode', 'playing');
-            }}
+            onPlayTest={() => startLesson(builderToLesson(draftLesson, canvasW, canvasH), { startAt: builderStepIdx, returnTo: 'authoring', keepCanvas: true })}
             onAskAI={() => setCmdKOpen(true)}
           />
         ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          {tutorialMode === 'playing' && activeLesson && (
+            <TutorialPlayerLane
+              lesson={activeLesson}
+              phase={lessonPhase}
+              stepIdx={lessonStepIdx}
+              results={lessonResults}
+              stepComplete={lessonStepComplete}
+              notice={lessonNotice}
+              exampleVisible={showLessonExample}
+              onToggleExample={() => setShowLessonExample((v) => !v)}
+              onBegin={() => { setLessonPhase('step'); setLessonStepIdx(0); }}
+              onPrev={() => { lessonNavRef.current = 'manual'; setLessonStepIdx((i) => Math.max(0, i - 1)); }}
+              onNext={advanceLesson}
+              onJump={(i) => { lessonNavRef.current = 'manual'; setLessonPhase('step'); setLessonStepIdx(i); }}
+              onExit={exitLesson}
+              exitLabel={lessonReturnTo === 'authoring' ? 'Back to builder' : 'Exit'}
+            />
+          )}
+          <div style={{ flex: 1, minHeight: 0 }}>
           <RightPane
             activeTab={rightTab} onTabChange={setRightTab}
             frame={frames[frameIdx]} activeLayerIdx={activeLayerIdx} onSelectLayer={setActiveLayerIdx}
@@ -2028,6 +2179,8 @@ function App() {
             onRejectProposal={rejectProposal}
             onRefineProposal={refineProposal}
           />
+          </div>
+          </div>
         )}
       </div>
 
@@ -2104,14 +2257,10 @@ function App() {
 
       <TutorialLibrary
         open={tutorialMode === 'library'}
+        lessons={BUILTIN_LESSONS}
+        completed={completedLessons}
         onClose={() => setTweak('tutorialMode', 'off')}
-        onStart={(lesson) => {
-          setActiveLesson(lesson);
-          setLessonStepIdx(0);
-          setShowHint(false);
-          setShowAIHint(false);
-          setTweak('tutorialMode', 'playing');
-        }}
+        onStart={(lesson) => startLesson(lesson)}
         onAuthor={() => setTweak('tutorialMode', 'authoring')}
       />
 

@@ -1,5 +1,7 @@
 import React from 'react';
 import { IconPlus, IconSparkle } from './Icons';
+import type { Tool } from '../types';
+import type { Check, Lesson, LessonStep } from '../lib/lessons';
 
 // ---------------------------------------------------------------------------
 // Local types (exported for use by App.tsx)
@@ -26,6 +28,54 @@ export interface BuilderLesson {
   difficulty: string;
   time: string;
   steps: BuilderStep[];
+}
+
+/**
+ * Turn a draft from the builder into a playable lesson, so a play test runs
+ * the real check engine on the author's own canvas. Regions are clipped to
+ * the canvas; validations the engine doesn't know become read-and-continue.
+ */
+export function builderToLesson(draft: BuilderLesson, w: number, h: number): Lesson {
+  const TARGETS = ['canvas', 'toolbar', 'palette', 'layers', 'timeline'];
+  const clip = (r: BuilderStep['highlightRegion']) => {
+    if (!r) return null;
+    const x = Math.max(0, Math.min(w - 1, r.x));
+    const y = Math.max(0, Math.min(h - 1, r.y));
+    return { x, y, w: Math.max(1, Math.min(w - x, r.w)), h: Math.max(1, Math.min(h - y, r.h)) };
+  };
+  return {
+    format: 'sindri-lesson',
+    version: 1,
+    id: draft.id,
+    title: draft.title || 'Untitled lesson',
+    author: draft.author ?? 'you',
+    difficulty: (['beginner', 'intermediate', 'advanced'].includes(draft.difficulty) ? draft.difficulty : 'beginner') as Lesson['difficulty'],
+    minutes: Math.max(1, parseInt(draft.time, 10) || 5),
+    summary: '',
+    intro: '',
+    outro: 'That’s the end of your lesson.',
+    start: { w, h },
+    steps: draft.steps.map((s) => {
+      const region = clip(s.highlightRegion);
+      const v = s.validation;
+      const checks: Check[] = [];
+      if (v.type === 'tool_used' && v.requiredTool) checks.push({ type: 'tool', tool: v.requiredTool as Tool });
+      if (v.type === 'pixels_present') {
+        checks.push({ type: 'pixels', min: Math.max(1, Number(v.minPixels) || 1), ...(region ? { region } : {}) });
+        if (v.requireClosedArea) checks.push({ type: 'closed', ...(region ? { region } : {}) });
+      }
+      return {
+        id: s.id,
+        title: s.title || 'Untitled step',
+        instruction: s.instruction || s.goalSummary || '',
+        hint: s.hint || undefined,
+        spotlight: TARGETS.includes(s.spotlightTarget) ? (s.spotlightTarget as LessonStep['spotlight']) : null,
+        region,
+        tools: s.allowedTools?.length ? (s.allowedTools as Tool[]) : null,
+        checks,
+      };
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,29 +1,7 @@
 import React from 'react';
 import type { SpotlightRect } from '../types';
-import { IconX, IconSearch, IconSparkle, IconPlus, IconCheck } from './Icons';
-
-// ---------------------------------------------------------------------------
-// Local types
-// ---------------------------------------------------------------------------
-
-interface CoverData {
-  w: number;
-  h: number;
-  pixels: (string | null)[][];
-}
-
-export interface TutorialLesson {
-  id: string;
-  title: string;
-  author: string;
-  difficulty: string;
-  time: string;
-  steps: number;
-  summary: string;
-  intro: string;
-  cover: CoverData;
-  completed: boolean;
-}
+import type { CheckResult, Lesson } from '../lib/lessons';
+import { IconX, IconSearch, IconPlus, IconCheck } from './Icons';
 
 // ---------------------------------------------------------------------------
 // Prop interfaces
@@ -31,21 +9,35 @@ export interface TutorialLesson {
 
 export interface TutorialLibraryProps {
   open: boolean;
+  lessons: Lesson[];
+  completed: string[];
   onClose: () => void;
-  onStart: (lesson: TutorialLesson) => void;
+  onStart: (lesson: Lesson) => void;
   onAuthor?: () => void;
 }
 
+/** Where the learner is: the intro card, a step, or the finish card. */
+export type LessonPhase = 'intro' | 'step' | 'outro';
+
 export interface TutorialPlayerLaneProps {
-  lesson: TutorialLesson;
+  lesson: Lesson;
+  phase: LessonPhase;
   stepIdx: number;
+  /** The current step's checks, evaluated live. */
+  results: CheckResult[];
+  /** Every check passes: the step is about to advance. */
+  stepComplete: boolean;
+  /** Why the last tool switch was refused, if it was. */
+  notice?: string | null;
+  exampleVisible: boolean;
+  onToggleExample: () => void;
+  onBegin: () => void;
   onPrev: () => void;
   onNext: () => void;
+  onJump: (idx: number) => void;
   onExit: () => void;
-  onShowHint: () => void;
-  onAskAI: () => void;
-  hintVisible: boolean;
-  aiHintVisible: boolean;
+  /** Label for leaving (a play test returns to the builder). */
+  exitLabel?: string;
 }
 
 export interface SpotlightCallout {
@@ -62,91 +54,6 @@ export interface TutorialBuilderRibbonProps {
   onExit: () => void;
   onPreview: () => void;
 }
-
-// ---------------------------------------------------------------------------
-// Cover decode helpers
-// ---------------------------------------------------------------------------
-
-const __coverMap: Record<string, string | null> = {
-  '.': null, 'k': '#1a1a1a', 'i': '#e6e1d4', 's': '#a8a298', 'm': '#6e6960',
-  'M': '#4a4642', 'c': '#6dbcdb', 'C': '#3a6e8a', 'o': '#d4541e', 'g': '#9bb070',
-  'r': '#e05555', 'y': '#f0c050',
-};
-
-function decodeCover(rows: string[]): CoverData {
-  return {
-    w: rows[0].length,
-    h: rows.length,
-    pixels: rows.map((r) => [...r].map((ch) => __coverMap[ch] ?? null)),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Lesson data
-// ---------------------------------------------------------------------------
-
-const LESSONS: TutorialLesson[] = [
-  {
-    id: 'outlines_101', title: 'Pixel outlines 101', author: 'sindri team', difficulty: 'beginner', time: '4 min', steps: 3,
-    summary: 'A clean, readable outline is the spine of every pixel sprite. Learn the two-pixel rule.',
-    intro: "Pick a 1-px brush, pick a contrasting ink, and we'll walk you through outlining a 12×12 mushroom.",
-    cover: decodeCover([
-      '..kkkkkk....', '.kssssssk...', 'krsrssrrsk..', 'krrssssrsk..', 'kssrrrrsk...',
-      '.kkksskkk...', '..kssssk....', '..kssssk....', '.kssssssk...', '.kssssssk...',
-      'kssssssssk..', '.kkkkkkkk...',
-    ]), completed: false,
-  },
-  {
-    id: 'dithering', title: 'Dithering basics', author: 'sindri team', difficulty: 'intermediate', time: '12 min', steps: 5,
-    summary: 'Use checker, bayer, and noise dithers to blend two colors without a third.',
-    intro: "You'll learn three dither patterns and where each one reads cleanly at sprite sizes.",
-    cover: decodeCover([
-      'mmsmsmsmsmsm', 'msmsmsmsmsms', 'mmmsmsmsmmsm', 'mmsmmmsmmmsm', 'mmmmsmmmsmmm',
-      'msmmmmsmmmmm', 'mmmmmsmmmmmm', 'mmsmmmmmmmsm', 'mmmmsmmmmmmm', 'mmmmmmmmsmmm',
-      'mmmmsmmmmmmm', 'mmmmmmmmmmmm',
-    ]), completed: true,
-  },
-  {
-    id: 'drone_walk', title: 'Drone walk cycle', author: 'you', difficulty: 'intermediate', time: '18 min', steps: 7,
-    summary: 'Take the demo drone from a 4-frame hover to a 6-frame walk with overshoot and squash.',
-    intro: "Reuse the drone_idle frames. You'll add 2 frames, shift the antenna and underglow on each.",
-    cover: decodeCover([
-      '............', '...kkkkkk...', '..kMmmmmMk..', '.kmsCccsmmk.',
-      '.kmsccccsmk.', '.kMmCccsmMk.', '..kmmmmmMk..', '...kooook...',
-      '....kook....', '............', '............', '............',
-    ]), completed: false,
-  },
-  {
-    id: 'onion_skin', title: 'Onion skin workflow', author: 'sindri team', difficulty: 'beginner', time: '6 min', steps: 3,
-    summary: 'Stop guessing — line up walk frames using the previous-frame overlay.',
-    intro: 'Toggle onion skin in the timeline, then build a 3-frame bounce ball with consistent contact points.',
-    cover: decodeCover([
-      '............', '....cccc....', '...ccccc....', '...ccccc....', '....cccc....',
-      '............', '....ssss....', '...sssss....', '...sssss....', '....ssss....',
-      '............', '............',
-    ]), completed: true,
-  },
-  {
-    id: 'palette_theory', title: 'Color palette theory', author: 'mira · community', difficulty: 'intermediate', time: '10 min', steps: 4,
-    summary: 'Build a 6-color sprite palette from a single base hue. Hue-shift highlights and shadows.',
-    intro: "Pick a base color, then we'll add light and dark variants by shifting hue, not just lightness.",
-    cover: decodeCover([
-      '............', '..oooooooo..', '..oyyyyyyo..', '..oyyyyyyo..', '..ooooooro..',
-      '..orrrrrro..', '..orrrrrco..', '..oCCCCCco..', '..occccccg..', '..ogggggcg..',
-      '..oooooogg..', '............',
-    ]), completed: false,
-  },
-  {
-    id: 'magic_wand', title: 'Cleanup with magic wand', author: 'jaiden · community', difficulty: 'beginner', time: '5 min', steps: 3,
-    summary: 'Use the wand + fill to recolor large regions without redrawing.',
-    intro: 'Bring in any sprite, wand-select the silhouette, and try four different fill colors.',
-    cover: decodeCover([
-      '............', '.ssssssss...', '.scccccss...', '.sccccccs...', '.scccccss...',
-      '.sssssss....', '....s.......', '...sss......', '..sssss.....', '.sssssss....',
-      '............', '............',
-    ]), completed: false,
-  },
-];
 
 // ---------------------------------------------------------------------------
 // Styles
@@ -221,88 +128,102 @@ const tutStyles = {
 // ---------------------------------------------------------------------------
 
 interface CoverPreviewProps {
-  cover: CoverData;
+  pixels: (string | null)[][];
   size?: number;
 }
 
-function CoverPreview({ cover, size = 160 }: CoverPreviewProps) {
+function CoverPreview({ pixels, size = 160 }: CoverPreviewProps) {
   const ref = React.useRef<HTMLCanvasElement>(null);
   React.useEffect(() => {
     const c = ref.current;
     if (!c) return;
     const ctx = c.getContext('2d');
     if (!ctx) return;
+    const h = pixels.length;
+    const w = pixels[0]?.length ?? 1;
     ctx.imageSmoothingEnabled = false;
-    const s = c.width / cover.w;
-    for (let y = 0; y < cover.h; y++) for (let x = 0; x < cover.w; x++) {
+    ctx.clearRect(0, 0, c.width, c.height);
+    const s = c.width / Math.max(w, h);
+    const ox = (c.width - w * s) / 2;
+    const oy = (c.height - h * s) / 2;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       ctx.fillStyle = ((Math.floor(x / 4) + Math.floor(y / 4)) % 2) ? '#0a0e14' : '#11161d';
-      ctx.fillRect(x * s, y * s, s, s);
+      ctx.fillRect(ox + x * s, oy + y * s, s, s);
+      const col = pixels[y][x];
+      if (col) { ctx.fillStyle = col; ctx.fillRect(ox + x * s, oy + y * s, s, s); }
     }
-    for (let y = 0; y < cover.h; y++) for (let x = 0; x < cover.w; x++) {
-      const col = cover.pixels[y][x];
-      if (!col) continue;
-      ctx.fillStyle = col;
-      ctx.fillRect(x * s, y * s, s, s);
-    }
-  }, [cover, size]);
+  }, [pixels, size]);
   return <canvas ref={ref} width={size} height={size} style={tutStyles.cardCover} />;
+}
+
+/** Library card art: the lesson's cover, else its last example. */
+function coverOf(l: Lesson): (string | null)[][] {
+  return l.cover ?? [...l.steps].reverse().find((s) => s.example)?.example ?? l.start.frames?.[0]?.layers[0]?.pixels ?? [[null]];
 }
 
 // ---------------------------------------------------------------------------
 // TutorialLibrary
 // ---------------------------------------------------------------------------
 
-export function TutorialLibrary({ open, onClose, onStart, onAuthor }: TutorialLibraryProps) {
-  const [tab, setTab] = React.useState<string>('library');
+export function TutorialLibrary({ open, lessons, completed, onClose, onStart, onAuthor }: TutorialLibraryProps) {
+  const [tab, setTab] = React.useState<'all' | 'todo' | 'done'>('all');
   const [query, setQuery] = React.useState('');
   const [hover, setHover] = React.useState<string | null>(null);
 
   if (!open) return null;
 
-  const filtered = LESSONS.filter((l) => {
-    if (tab === 'community' && !l.author.includes('community')) return false;
-    if (tab === 'mine' && l.author !== 'you') return false;
-    if (query && !l.title.toLowerCase().includes(query.toLowerCase()) && !l.summary.toLowerCase().includes(query.toLowerCase())) return false;
+  const isDone = (l: Lesson) => completed.includes(l.id);
+  const filtered = lessons.filter((l) => {
+    if (tab === 'todo' && isDone(l)) return false;
+    if (tab === 'done' && !isDone(l)) return false;
+    const q = query.trim().toLowerCase();
+    if (q && !l.title.toLowerCase().includes(q) && !l.summary.toLowerCase().includes(q)) return false;
     return true;
   });
+  const todo = lessons.filter((l) => !isDone(l)).length;
 
   return (
     <div style={tutStyles.scrim} onClick={onClose}>
-      <div style={tutStyles.dialog} onClick={(e) => e.stopPropagation()}>
+      <div style={tutStyles.dialog} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Lessons">
         <div style={tutStyles.dialogHead}>
           <div>
             <div style={tutStyles.dialogTitle}>Lessons</div>
-            <div style={tutStyles.dialogSub}>guided pixel-art tutorials · runs live inside the editor</div>
+            <div style={tutStyles.dialogSub}>guided, hands-on · checked as you draw · your sprite waits while you learn</div>
           </div>
           <span style={tutStyles.dialogClose} onClick={onClose} title="Close"><IconX size={11} /></span>
         </div>
         <div style={tutStyles.tabs}>
-          <div style={tutStyles.tab(tab === 'library')} onClick={() => setTab('library')}>All<span style={tutStyles.tabBadge}>{LESSONS.length}</span></div>
-          <div style={tutStyles.tab(tab === 'community')} onClick={() => setTab('community')}>Community<span style={tutStyles.tabBadge}>{LESSONS.filter((l) => l.author.includes('community')).length}</span></div>
-          <div style={tutStyles.tab(tab === 'mine')} onClick={() => setTab('mine')}>Mine<span style={tutStyles.tabBadge}>{LESSONS.filter((l) => l.author === 'you').length}</span></div>
+          <div style={tutStyles.tab(tab === 'all')} onClick={() => setTab('all')}>All<span style={tutStyles.tabBadge}>{lessons.length}</span></div>
+          <div style={tutStyles.tab(tab === 'todo')} onClick={() => setTab('todo')}>To do<span style={tutStyles.tabBadge}>{todo}</span></div>
+          <div style={tutStyles.tab(tab === 'done')} onClick={() => setTab('done')}>Done<span style={tutStyles.tabBadge}>{lessons.length - todo}</span></div>
         </div>
         <div style={tutStyles.searchRow}>
           <span style={{ color: 'var(--ink-4)' }}><IconSearch size={13} /></span>
           <input style={tutStyles.searchInput} placeholder="Search lessons…" value={query} onChange={(e) => setQuery(e.target.value)} />
-          <span style={tutStyles.composeBtn} onClick={() => { onClose(); onAuthor?.(); }} title="Sindri-drafted lesson">
-            <IconSparkle size={11} stroke="var(--amber)" /> Draft with Sindri
-          </span>
-          <span style={{ ...tutStyles.composeBtn, color: 'var(--ink)', border: '1px solid var(--rule-2)' }} onClick={() => { onClose(); onAuthor?.(); }}>
-            <IconPlus size={11} /> New lesson
-          </span>
+          {onAuthor && (
+            <span style={{ ...tutStyles.composeBtn, color: 'var(--ink)', border: '1px solid var(--rule-2)' }} onClick={() => { onClose(); onAuthor(); }}>
+              <IconPlus size={11} /> New lesson
+            </span>
+          )}
         </div>
         <div style={tutStyles.grid}>
+          {filtered.length === 0 && (
+            <div style={{ gridColumn: '1 / -1', padding: 32, background: 'var(--paper-2)', color: 'var(--ink-3)', fontSize: 13 }}>
+              {tab === 'done' ? 'No finished lessons yet — pick one from “To do”.' : 'No lessons match that search.'}
+            </div>
+          )}
           {filtered.map((l) => (
             <div
               key={l.id}
+              data-lesson={l.id}
               style={{ ...tutStyles.card, ...(hover === l.id ? tutStyles.cardHover : null) }}
               onMouseEnter={() => setHover(l.id)}
               onMouseLeave={() => setHover(null)}
               onClick={() => onStart(l)}
             >
               <div style={tutStyles.cardCoverWrap}>
-                <CoverPreview cover={l.cover} size={96} />
-                {l.completed && <span style={tutStyles.completedBadge}>done</span>}
+                <CoverPreview pixels={coverOf(l)} size={96} />
+                {isDone(l) && <span style={tutStyles.completedBadge}>done</span>}
               </div>
               <div style={tutStyles.cardBody}>
                 <div style={tutStyles.cardTitleBlock}>
@@ -312,9 +233,9 @@ export function TutorialLibrary({ open, onClose, onStart, onAuthor }: TutorialLi
                 <div style={{ flex: 1 }} />
                 <div style={tutStyles.cardMeta}>
                   <span style={tutStyles.difficulty(l.difficulty)}>{l.difficulty}</span>
-                  <span>{l.steps} steps</span>
+                  <span>{l.steps.length} steps</span>
                   <span style={tutStyles.cardMetaDot} />
-                  <span>{l.time}</span>
+                  <span>{l.minutes} min</span>
                 </div>
                 <div style={{ ...tutStyles.cardMeta, color: 'var(--ink-3)' }}>
                   <span>{l.author}</span>
@@ -332,102 +253,107 @@ export function TutorialLibrary({ open, onClose, onStart, onAuthor }: TutorialLi
 // TutorialPlayerLane
 // ---------------------------------------------------------------------------
 
-interface PlayerStep {
-  title: string;
-  kind: string;
-  criteria: { label: string; met: boolean }[];
-}
-
-export function TutorialPlayerLane({ lesson, stepIdx, onNext, onExit, onShowHint, onAskAI, hintVisible, aiHintVisible }: TutorialPlayerLaneProps) {
-  const steps = React.useMemo<PlayerStep[]>(() => {
-    const stepArr: PlayerStep[] = [
-      {
-        title: 'Pick the pencil and pick a dark ink', kind: 'use_tool',
-        criteria: [{ label: 'tool: pencil', met: stepIdx > 0 }, { label: 'color: any dark', met: stepIdx > 0 }],
-      },
-      {
-        title: 'Outline the mushroom cap', kind: 'draw_closed_shape',
-        criteria: [{ label: '≥ 18 pixels placed', met: stepIdx > 1 }, { label: 'shape is closed', met: stepIdx > 1 }],
-      },
-      {
-        title: 'Fill the cap with red', kind: 'use_fill',
-        criteria: [{ label: 'fill in cap region', met: false }, { label: 'color: red family', met: false }],
-      },
-    ];
-    return stepArr.slice(0, lesson.steps);
-  }, [lesson.steps, stepIdx]);
-
-  const current = steps[stepIdx];
-  const goals = ['Switch to the pencil with any dark ink', 'Draw a closed outline of the cap', 'Bucket-fill the cap interior with red'];
-  const goal = goals[stepIdx] ?? '';
+export function TutorialPlayerLane({
+  lesson, phase, stepIdx, results, stepComplete, notice, exampleVisible,
+  onToggleExample, onBegin, onPrev, onNext, onJump, onExit, exitLabel = 'Exit',
+}: TutorialPlayerLaneProps) {
+  const [hintOpen, setHintOpen] = React.useState(false);
+  React.useEffect(() => { setHintOpen(false); }, [stepIdx, phase]);
+  const step = lesson.steps[stepIdx];
+  const total = lesson.steps.length;
+  const last = stepIdx >= total - 1;
+  const readOnly = step && step.checks.length === 0;
 
   return (
-    <div style={tutStyles.laneRoot}>
-      <div style={tutStyles.laneHead}>
-        <div style={tutStyles.laneKicker}>● lesson · in progress</div>
+    <div style={{ ...tutStyles.laneRoot, height: 'auto', maxHeight: '58vh', borderBottom: '1px solid var(--rule-2)' }} data-lesson-lane>
+      <div style={{ ...tutStyles.laneHead, padding: '12px 18px 10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <div style={tutStyles.laneKicker}>● lesson{phase === 'step' ? ` · step ${stepIdx + 1} of ${total}` : phase === 'outro' ? ' · complete' : ''}</div>
+          <span style={{ ...tutStyles.laneKicker, color: 'var(--ink-4)', cursor: 'pointer' }} onClick={onExit} title="Leave the lesson and get your sprite back">{exitLabel} ×</span>
+        </div>
         <div style={tutStyles.laneTitle}>{lesson.title}</div>
-        <div style={tutStyles.laneSub}>{lesson.difficulty} · {lesson.author} · step {stepIdx + 1} of {steps.length}</div>
       </div>
-      <div style={tutStyles.progressRow}>
-        {steps.map((_, i) => (
-          <span key={i} style={tutStyles.progDot(i < stepIdx ? 'done' : i === stepIdx ? 'current' : 'pending')} />
+      <div style={{ ...tutStyles.progressRow, padding: '10px 18px 8px' }}>
+        {lesson.steps.map((s, i) => (
+          <span
+            key={s.id}
+            title={`${i + 1}. ${s.title}`}
+            onClick={() => onJump(i)}
+            style={{ ...tutStyles.progDot(phase === 'outro' || i < stepIdx ? 'done' : phase === 'step' && i === stepIdx ? 'current' : 'pending'), cursor: 'pointer' }}
+          />
         ))}
       </div>
-      <div style={tutStyles.stepList}>
-        {steps.map((s, i) => {
-          const state = i < stepIdx ? 'done' : i === stepIdx ? 'current' : 'pending';
-          return (
-            <div key={i} style={tutStyles.stepRow(state)}>
-              <span style={tutStyles.stepIdx(state)}>
-                {state === 'done' ? <IconCheck size={11} stroke="var(--moss)" /> : String(i + 1).padStart(2, '0')}
-              </span>
-              <div style={tutStyles.stepText}>
-                <div style={tutStyles.stepTitle(state)}>{s.title}</div>
-                <div style={tutStyles.stepKind}>{s.kind}</div>
+
+      <div style={{ ...tutStyles.currentCard, borderTop: 'none', overflowY: 'auto', flex: 1 }}>
+        {phase === 'intro' && (
+          <>
+            <div style={tutStyles.instruction}>{lesson.intro}</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-4)', letterSpacing: '0.06em' }}>
+              {total} steps · about {lesson.minutes} min · {lesson.difficulty}
+            </div>
+          </>
+        )}
+        {phase === 'outro' && (
+          <>
+            <div style={{ ...tutStyles.goalRow, color: 'var(--moss)' }}><IconCheck size={12} stroke="var(--moss)" /><span>lesson complete</span></div>
+            <div style={tutStyles.instruction}>{lesson.outro}</div>
+          </>
+        )}
+        {phase === 'step' && step && (
+          <>
+            <div style={{ ...tutStyles.goalRow, color: stepComplete ? 'var(--moss)' : 'var(--cyan)' }}>
+              {stepComplete ? <IconCheck size={12} stroke="var(--moss)" /> : <span style={tutStyles.goalDot} />}
+              <span>{stepComplete ? 'nice — next step…' : step.title}</span>
+            </div>
+            <div style={tutStyles.instruction}>{step.instruction}</div>
+            {!!results.length && (
+              <div style={tutStyles.criteria} aria-live="polite">
+                {results.map((c, i) => (
+                  <div key={i} style={tutStyles.critRow(c.met)}>
+                    <span style={tutStyles.critGlyph}>
+                      {c.met
+                        ? <IconCheck size={10} stroke="var(--moss)" />
+                        : <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="square"><rect x="0.5" y="0.5" width="9" height="9" /></svg>}
+                    </span>
+                    <span style={{ flex: 1 }}>{c.label}</span>
+                    {c.progress && !c.met && <span style={{ color: 'var(--ink-4)' }}>{c.progress}</span>}
+                  </div>
+                ))}
               </div>
-            </div>
-          );
-        })}
-      </div>
-      <div style={tutStyles.currentCard}>
-        <div style={tutStyles.goalRow}><span style={tutStyles.goalDot} /><span>goal · {goal}</span></div>
-        <div style={tutStyles.instruction}>{current?.title}.</div>
-        <div style={tutStyles.criteria}>
-          {current?.criteria.map((c, i) => (
-            <div key={i} style={tutStyles.critRow(c.met)}>
-              <span style={tutStyles.critGlyph}>
-                {c.met
-                  ? <IconCheck size={10} stroke="var(--moss)" />
-                  : <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="square"><rect x="0.5" y="0.5" width="9" height="9" /></svg>}
-              </span>
-              <span>{c.label}</span>
-            </div>
-          ))}
-        </div>
-        {hintVisible && (
-          <div style={tutStyles.hint}>
-            <div style={tutStyles.hintLabel}>hint</div>
-            <div>Pick the pencil from the toolbar (P) and pick any dark ink from the palette. Don't worry about the exact hex — the lesson checks the family.</div>
-          </div>
-        )}
-        {aiHintVisible && (
-          <div style={tutStyles.aiHint}>
-            <div style={tutStyles.aiHintHead}><IconSparkle size={11} stroke="var(--amber)" />Sindri suggests</div>
-            <div>You've placed 12 pixels — 6 short of the closed-shape goal. The opening on the bottom-right corner of the cap leaves a 3px gap; close it with the pencil to satisfy the validator.</div>
-            <div style={tutStyles.aiHintRow}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-4)' }}>qwen3:14b · 1.2s</span>
-              <span style={{ fontFamily: 'var(--font-display)', fontSize: 11, color: 'var(--amber)', cursor: 'pointer' }}>Show me how →</span>
-            </div>
-          </div>
+            )}
+            {notice && <div style={{ ...tutStyles.hint, borderColor: 'var(--amber)', color: 'var(--amber)' }}>{notice}</div>}
+            {hintOpen && step.hint && (
+              <div style={tutStyles.hint}>
+                <div style={tutStyles.hintLabel}>hint</div>
+                <div>{step.hint}</div>
+              </div>
+            )}
+          </>
         )}
       </div>
+
       <div style={tutStyles.laneFooter}>
-        <span style={tutStyles.laneBtn('exit')} onClick={onExit}>Exit</span>
-        <span style={tutStyles.laneBtn('exit')} onClick={onShowHint}>Hint</span>
-        <span style={tutStyles.laneBtnAi} onClick={onAskAI} title="Ask Sindri for a contextual hint">
-          <IconSparkle size={10} stroke="var(--amber)" />Sindri
-        </span>
-        <span style={tutStyles.laneBtn('primary')} onClick={onNext}>{stepIdx >= lesson.steps - 1 ? 'Finish' : 'Next →'}</span>
+        {phase === 'intro' && <span style={tutStyles.laneBtn('primary')} onClick={onBegin}>Start →</span>}
+        {phase === 'step' && (
+          <>
+            {stepIdx > 0 && <span style={tutStyles.laneBtn('exit')} onClick={onPrev} title="Previous step">←</span>}
+            {step?.hint && <span style={tutStyles.laneBtn('exit')} onClick={() => setHintOpen((v) => !v)}>{hintOpen ? 'Hide hint' : 'Hint'}</span>}
+            {step?.example && <span style={tutStyles.laneBtn(exampleVisible ? 'exit' : 'exit')} onClick={onToggleExample} title="Show or hide the example over the canvas">{exampleVisible ? 'Hide example' : 'Show example'}</span>}
+            <span
+              style={tutStyles.laneBtn(readOnly || stepComplete ? 'primary' : 'exit')}
+              onClick={onNext}
+              title={readOnly ? undefined : 'Skip ahead without completing this step'}
+            >
+              {readOnly ? (last ? 'Finish' : 'Continue →') : last ? 'Skip to end' : 'Skip →'}
+            </span>
+          </>
+        )}
+        {phase === 'outro' && (
+          <>
+            <span style={tutStyles.laneBtn('exit')} onClick={() => onJump(0)}>Replay</span>
+            <span style={tutStyles.laneBtn('primary')} onClick={onExit}>Back to my sprite</span>
+          </>
+        )}
       </div>
     </div>
   );

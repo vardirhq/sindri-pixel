@@ -4,6 +4,11 @@
 
 ### Added
 
+- **Lessons that teach for real.** Open *Lessons* for hands-on tutorials that run inside the editor and check your work as you draw. Each step says what to do, lights up the panel or the part of the canvas it's about, and dims the tools it doesn't need. It shows the example to trace and ticks its goals off live ("Place 8 pixels · 5 / 8", "Close the outline (no gaps)"). When every goal is met, it moves on by itself. Your own sprite, with its undo history, palette and view, is put aside when a lesson starts and comes back when you leave. Finished lessons are marked *done*. Three lessons ship with the app:
+  - *Your first sprite*: outline, fill and shade a slime.
+  - *Onion skin: a bouncing ball*: frames, onion skin, squash, tags, play.
+  - *Cleaning up an AI import*: merge near-duplicate colours down to a clean palette.
+- The lesson builder's *Play test* now runs the draft on the real check engine, on your own canvas, and returns to the builder.
 - **Recolour everywhere.** Double-click a swatch (in the palette or *In artwork*) and pick a new colour: every pixel of that colour, in every frame and layer, changes live as you pick. The whole session is one undo step, and undo restores the palette too. This is the everyday use of an "indexed" mode (palette swaps, fixing an AI import's near-miss colours) without converting the file.
 - **Palette files.** Import and export `.gpl` (GIMP, Aseprite, Krita), `.hex` (Lospec) and `.pal` (JASC) palettes from the palette tab. Importing replaces the palette (undoable). The desktop app saves through a new `write_palette_file` command that writes only those extensions, atomically.
 - **Custom brushes.** Select pixels and press ⌘B (or right-click → *Use selection as brush*) to paint with them. The pencil stamps the shape in its own colours, or in the current colour with *Paint brush colours* off. The eraser and Shade tool use it as a mask. Symmetry mirrors the brush along with its position. The tool options show a preview; × returns to the square brush.
@@ -35,6 +40,7 @@
 
 ### Fixed
 
+- The canvas no longer crashes when the sprite changes size without the zoom changing (for example, opening a 16×16 file while viewing a 32×32 one at the same zoom): the drawing routine kept using the old size.
 - The editor no longer grows taller than the window when the tools panel is long. The panel scrolls on its own now; before, it stretched the whole editor row, pushing the canvas off-centre and the timeline and status bar below the bottom of a 900px-tall window.
 - **Sprite-sheet splitting no longer moves a boot or a fist to the wrong pose.** The splitter works on a coarse grid, which can join poses that are only a few pixels apart, like a boot hanging down beside the hair of the pose below. The cut between them could then give the boot to the lower pose, leaving one frame footless and another with a floating boot. Every separate shape on the sheet now goes whole to the pose it belongs to. Only poses that really touch are divided by the cut.
 - **Sprite-sheet splitting no longer glues whole poses together.** When a few poses touched (hair reaching the feet above), their combined blob made every separate pose look like a small fragment, and those were attached to a neighbour. A frame could then hold two or four poses. Poses are now judged against the size of a typical pose after touching ones are cut apart. A real 8×4 run-cycle sheet now splits into all 32 poses instead of 29.
