@@ -310,6 +310,14 @@ export function Timeline({
             >
               <div style={{ ...tlStyles.thumbBox(active, false), ...(inRange(i) && !active ? { border: '1px dashed var(--ink-2)' } : {}) }}>
                 <FrameThumb frame={f}/>
+                {f.layers.some((l) => l.link) && (
+                  <span
+                    style={{ ...tlStyles.badge, color: 'var(--cyan)', borderColor: 'var(--cyan)' }}
+                    title={`Linked: ${f.layers.filter((l) => l.link).map((l) => l.name).join(', ')} shared with other frames`}
+                  >
+                    link
+                  </span>
+                )}
               </div>
               <span style={tlStyles.fnum(active, false)}>{String(i + 1).padStart(2, '0')} · {f.duration}ms</span>
             </div>

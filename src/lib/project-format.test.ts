@@ -71,3 +71,18 @@ describe('Sindri Pixel project format', () => {
     expect(() => parseProject(json)).toThrow('wrong height');
   });
 });
+
+describe('linked cels in files', () => {
+  it('round-trips links and re-syncs linked drawings on load', () => {
+    const a: Frame = { ...frame, layers: [{ ...frame.layers[0], link: 'L' }] };
+    const b: Frame = { ...frame, id: 'frame-2', layers: [{ ...frame.layers[0], id: 'layer-2', link: 'L', pixels: [[null, null], [null, null]] }] };
+    const project = parseProject(serializeProject({ name: 'hero.spr', w: 2, h: 2, frames: [a, b], swatches: [] }));
+    expect(project.frames[1].layers[0].link).toBe('L');
+    expect(project.frames[1].layers[0].pixels).toEqual(frame.layers[0].pixels);
+  });
+
+  it('rejects a malformed link', () => {
+    const bad = JSON.stringify({ format: 'sindri-pixel', version: 1, name: 'x.spr', w: 2, h: 2, frames: [{ ...frame, layers: [{ ...frame.layers[0], link: 7 }] }] });
+    expect(() => parseProject(bad)).toThrow(/invalid link/);
+  });
+});

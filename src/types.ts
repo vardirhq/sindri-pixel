@@ -8,6 +8,9 @@ export interface Layer {
   visible: boolean;
   opacity: number;
   pixels: PixelGrid;
+  /** Layers in different frames with the same link share one drawing
+   *  (linked cels): editing one edits them all. */
+  link?: string;
 }
 
 export interface Frame {

@@ -1,4 +1,5 @@
 import type { Frame } from '../types';
+import { syncLinks } from './cels';
 import { validateTags, type FrameTag } from './tags';
 
 export const PROJECT_FORMAT = 'sindri-pixel';
@@ -54,6 +55,7 @@ function validateFrame(frame: unknown, frameIndex: number, w: number, h: number)
       typeof layer.opacity === 'number' && Number.isFinite(layer.opacity) && layer.opacity >= 0 && layer.opacity <= 1,
       `frame ${frameIndex + 1}, layer ${layerIndex + 1} has invalid opacity`,
     );
+    assert(layer.link === undefined || (typeof layer.link === 'string' && layer.link.length > 0), `frame ${frameIndex + 1}, layer ${layerIndex + 1} has an invalid link`);
     assert(Array.isArray(layer.pixels) && layer.pixels.length === h, `frame ${frameIndex + 1}, layer ${layerIndex + 1} has the wrong height`);
     layer.pixels.forEach((row, y) => {
       assert(Array.isArray(row) && row.length === w, `frame ${frameIndex + 1}, layer ${layerIndex + 1}, row ${y + 1} has the wrong width`);
@@ -104,7 +106,8 @@ export function parseProject(json: string, fallbackName = 'untitled.spr'): Sprit
     name,
     w: Number(w),
     h: Number(h),
-    frames: raw.frames,
+    // Linked cels share one drawing; the file stores each copy, so re-sync.
+    frames: syncLinks(raw.frames),
     swatches,
     tags,
   };
