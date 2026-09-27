@@ -1,7 +1,9 @@
 import type { Frame } from '../types';
+import { validateTags, type FrameTag } from './tags';
 
 export const PROJECT_FORMAT = 'sindri-pixel';
-export const PROJECT_FORMAT_VERSION = 1;
+// v2 adds animation tags; v1 files (no tags) still open.
+export const PROJECT_FORMAT_VERSION = 2;
 
 export interface SpriteProject {
   format: typeof PROJECT_FORMAT;
@@ -11,6 +13,7 @@ export interface SpriteProject {
   h: number;
   frames: Frame[];
   swatches: string[];
+  tags: FrameTag[];
 }
 
 interface ProjectInput {
@@ -19,6 +22,7 @@ interface ProjectInput {
   h?: unknown;
   frames?: unknown;
   swatches?: unknown;
+  tags?: unknown;
   format?: unknown;
   version?: unknown;
 }
@@ -84,6 +88,12 @@ export function parseProject(json: string, fallbackName = 'untitled.spr'): Sprit
 
   raw.frames.forEach((frame, index) => validateFrame(frame, index, Number(w), Number(h)));
   const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name : fallbackName;
+  let tags: FrameTag[];
+  try {
+    tags = validateTags(raw.tags, raw.frames.length);
+  } catch (error) {
+    throw new Error(`Invalid Sindri Pixel project: ${(error as Error).message}`);
+  }
   const swatches = Array.isArray(raw.swatches)
     ? raw.swatches.filter((color): color is string => typeof color === 'string' && HEX_COLOR.test(color))
     : [];
@@ -96,10 +106,13 @@ export function parseProject(json: string, fallbackName = 'untitled.spr'): Sprit
     h: Number(h),
     frames: raw.frames,
     swatches,
+    tags,
   };
 }
 
-export function serializeProject(project: Omit<SpriteProject, 'format' | 'version'>): string {
+export function serializeProject(
+  project: Omit<SpriteProject, 'format' | 'version' | 'tags'> & { tags?: FrameTag[] },
+): string {
   return JSON.stringify({
     format: PROJECT_FORMAT,
     version: PROJECT_FORMAT_VERSION,

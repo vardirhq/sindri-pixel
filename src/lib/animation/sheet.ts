@@ -86,16 +86,31 @@ export function buildSheet(frames: RGBAImage[], options: SheetOptions): Sheet {
   return { image, rects, columns, rows };
 }
 
+/** Cell rectangles of an unpadded grid sheet: `count` cells of `w × h`,
+ *  `columns` per row (the editor's sheet export). */
+export function gridSheet(count: number, w: number, h: number, columns: number): Pick<Sheet, 'rects' | 'columns' | 'rows'> & { image: { width: number; height: number } } {
+  const cols = Math.max(1, Math.min(columns, count));
+  const rows = Math.ceil(count / cols);
+  const rects = Array.from({ length: count }, (_, i) => ({ x: (i % cols) * w, y: Math.floor(i / cols) * h, w, h }));
+  return { rects, columns: cols, rows, image: { width: cols * w, height: rows * h } };
+}
+
 export interface SheetMeta {
   /** Base name used for frame names and the image file (`name.png`). */
   name: string;
   durations: number[];
   pingPong: boolean;
   scale: number;
+  /** Animation tags; without any, one tag spans every frame. */
+  tags?: { name: string; from: number; to: number; direction: 'forward' | 'reverse' | 'pingpong' }[];
+  /** `meta.app` (defaults to the web tool's address). */
+  app?: string;
+  /** `meta.image` (defaults to `name.png`). */
+  image?: string;
 }
 
 /** Aseprite "array" JSON describing a sheet built by `buildSheet`. */
-export function sheetJson(sheet: Sheet, meta: SheetMeta): object {
+export function sheetJson(sheet: Pick<Sheet, 'rects'> & { image: { width: number; height: number } }, meta: SheetMeta): object {
   return {
     frames: sheet.rects.map((r, i) => ({
       filename: `${meta.name} ${i}.png`,
@@ -107,15 +122,15 @@ export function sheetJson(sheet: Sheet, meta: SheetMeta): object {
       duration: Math.round(meta.durations[i]),
     })),
     meta: {
-      app: 'https://pixel.vardir.no',
+      app: meta.app ?? 'https://pixel.vardir.no',
       version: '1.0',
-      image: `${meta.name}.png`,
+      image: meta.image ?? `${meta.name}.png`,
       format: 'RGBA8888',
       size: { w: sheet.image.width, h: sheet.image.height },
       scale: String(meta.scale),
-      frameTags: [
-        { name: meta.name, from: 0, to: sheet.rects.length - 1, direction: meta.pingPong ? 'pingpong' : 'forward' },
-      ],
+      frameTags: meta.tags?.length
+        ? meta.tags.map(({ name, from, to, direction }) => ({ name, from, to, direction }))
+        : [{ name: meta.name, from: 0, to: sheet.rects.length - 1, direction: meta.pingPong ? 'pingpong' : 'forward' }],
     },
   };
 }

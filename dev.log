@@ -1,0 +1,12 @@
+
+> sindri-pixel@0.1.0-beta.2 dev /home/user/sindri-pixel
+> vite
+
+
+  VITE v5.4.21  ready in 237 ms
+
+  ➜  Local:   http://localhost:1420/
+  ➜  Network: use --host to expose
+10:04:17 AM [vite] hmr update /src/App.tsx
+10:04:34 AM [vite] page reload dist-web/index.html
+10:04:34 AM [vite] page reload dist-web/index.html
