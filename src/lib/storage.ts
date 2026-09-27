@@ -119,3 +119,25 @@ export function readAutosave(): AutosaveSnapshot | null {
 export function clearAutosave(): void {
   try { localStorage.removeItem(AUTOSAVE_KEY); } catch { /* ignore */ }
 }
+
+// ── Lesson progress ───────────────────────────────────────────────────────────
+
+const LESSONS_DONE_KEY = 'sindri_lessons_done';
+
+/** Ids of the lessons this person has finished. */
+export function getCompletedLessons(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LESSONS_DONE_KEY) ?? '[]');
+    return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function markLessonCompleted(id: string): void {
+  try {
+    const done = new Set(getCompletedLessons());
+    done.add(id);
+    localStorage.setItem(LESSONS_DONE_KEY, JSON.stringify([...done]));
+  } catch { /* storage unavailable: progress just isn't remembered */ }
+}

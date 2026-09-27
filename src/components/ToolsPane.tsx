@@ -23,6 +23,8 @@ interface ToolsPaneProps {
   onToolOptionChange: (key: keyof ToolOptions, value: ToolOptions[keyof ToolOptions]) => void;
   activeTab: LeftTab;
   onTabChange: (tab: LeftTab) => void;
+  /** During a lesson step, the tools it uses; the rest are dimmed. */
+  allowedTools?: Tool[] | null;
 }
 
 // ── Styles ───────────────────────────────────────────────────────────────────
@@ -281,7 +283,7 @@ export function ToolsPane({
   helper, onHelperChange,
   modifiers, onModifierToggle, onSymmetryChange,
   toolOptions, onToolOptionChange,
-  activeTab, onTabChange,
+  activeTab, onTabChange, allowedTools = null,
 }: ToolsPaneProps) {
   const [tooltip, setTooltip] = useState<TooltipInfo | null>(null);
   const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -306,7 +308,7 @@ export function ToolsPane({
   const renderToolsContent = () => (
     <>
       {/* Tool grid */}
-      <div style={tpStyles.toolGrid}>
+      <div style={tpStyles.toolGrid} data-spotlight="toolbar">
         {TOOLS.map((t, i) => {
           const col = i % 3;
           const row = Math.floor(i / 3);
@@ -314,7 +316,7 @@ export function ToolsPane({
           return (
             <div
               key={t.id}
-              style={tpStyles.toolBtn(active, col, row, rowsTotal)}
+              style={{ ...tpStyles.toolBtn(active, col, row, rowsTotal), ...(allowedTools?.length && !allowedTools.includes(t.id) ? { opacity: 0.3 } : {}) }}
               onClick={() => onToolChange(t.id)}
               onMouseEnter={e => handleToolEnter(t, e.currentTarget)}
               onMouseLeave={handleToolLeave}

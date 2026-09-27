@@ -38,3 +38,12 @@ describe('sprite export helpers', () => {
     expect(() => buildSpriteSheet(new Array(20).fill(frame('#ff0000')), 512, 512, 1)).toThrow('too large');
   });
 });
+
+describe('compositeGrid', () => {
+  it('shows the topmost visible layer at each pixel', async () => {
+    const { compositeGrid } = await import('./sprite');
+    const layer = (pixels: (string | null)[][], visible = true) => ({ id: 'l', name: 'l', visible, opacity: 1, pixels });
+    const frame = { id: 'f', duration: 100, layers: [layer([['#111111', '#111111']]), layer([[null, '#222222']]), layer([['#333333', null]], false)] };
+    expect(compositeGrid(frame, 2, 1)).toEqual([['#111111', '#222222']]);
+  });
+});

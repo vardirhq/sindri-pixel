@@ -32,6 +32,8 @@ interface CanvasViewProps {
   onStrokeBegin?: () => void;
   /** Project palette; the Shade tool finds colour ramps in it. */
   palette?: string[];
+  /** Art to trace (a lesson's example), drawn faintly over the canvas. */
+  trace?: (string | null)[][] | null;
   selection: { x0: number; y0: number; x1: number; y1: number; pixels?: [number, number][] } | null;
   onSelectionChange: (sel: { x0: number; y0: number; x1: number; y1: number; pixels?: [number, number][] } | null) => void;
   onContextMenu?: (x: number, y: number) => void;
@@ -193,7 +195,7 @@ export function CanvasView({
   onAcceptGhost, onRejectGhost, onRefineGhost,
   activeTab, onTabChange, isPlaying,
   zoomIdx, onZoomChange,
-  canvasW, canvasH, onStrokeBegin, palette = [],
+  canvasW, canvasH, onStrokeBegin, palette = [], trace = null,
   selection, onSelectionChange,
   onContextMenu,
 }: CanvasViewProps) {
@@ -205,6 +207,7 @@ export function CanvasView({
   const previewRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const ghostRef = useRef<HTMLCanvasElement>(null);
+  const traceRef = useRef<HTMLCanvasElement>(null);
 
   const [drag, setDrag] = useState<DragState>(null);
   // selection and onSelectionChange come from App as props (lifted state)
@@ -293,7 +296,7 @@ export function CanvasView({
       ctx.globalAlpha = (opts.alpha ?? 1) * layer.opacity;
       for (let y = 0; y < canvasH; y++) {
         for (let x = 0; x < canvasW; x++) {
-          const c = layer.pixels[y][x];
+          const c = layer.pixels[y]?.[x];
           if (c) {
             ctx.fillStyle = c;
             ctx.fillRect(x * zoom, y * zoom, zoom, zoom);
@@ -302,7 +305,9 @@ export function CanvasView({
       }
     });
     ctx.globalAlpha = 1;
-  }, [zoom]);
+  // The canvas size matters too: a stale 32×32 closure over a 16×16 frame
+  // reads past its rows.
+  }, [zoom, canvasW, canvasH]);
 
   useEffect(() => {
     drawFrameToCanvas(baseRef.current, frame, { checker: true });
@@ -324,7 +329,7 @@ export function CanvasView({
         nctx.globalAlpha = 0.14 * layer.opacity;
         for (let y = 0; y < canvasH; y++) {
           for (let x = 0; x < canvasW; x++) {
-            const c = layer.pixels[y][x];
+            const c = layer.pixels[y]?.[x];
             if (c) { nctx.fillStyle = c; nctx.fillRect(x * zoom, y * zoom, zoom, zoom); }
           }
         }
@@ -332,6 +337,24 @@ export function CanvasView({
       nctx.globalAlpha = 1;
     }
   }, [showOnionSkin, prevFrame, nextFrame, drawFrameToCanvas, activeTab, frames.length, canvasW, canvasH, zoom]);
+
+  // Lesson example: faint enough to draw over, visible enough to follow.
+  useEffect(() => {
+    const c = traceRef.current;
+    const ctx = c?.getContext('2d');
+    if (!c || !ctx) return;
+    ctx.clearRect(0, 0, c.width, c.height);
+    if (!trace) return;
+    // Lightened halfway to white, so dark outlines show on the dark canvas.
+    ctx.globalAlpha = 0.4;
+    trace.forEach((row, y) => row.forEach((col, x) => {
+      if (!col || x >= canvasW || y >= canvasH) return;
+      const ch = [1, 3, 5].map((i) => Math.round((parseInt(col.slice(i, i + 2), 16) + 235) / 2));
+      ctx.fillStyle = `rgb(${ch[0]},${ch[1]},${ch[2]})`;
+      ctx.fillRect(x * zoom, y * zoom, zoom, zoom);
+    }));
+    ctx.globalAlpha = 1;
+  }, [trace, zoom, canvasW, canvasH, activeTab]);
 
   useEffect(() => {
     if (!ghostRef.current) return;
@@ -1248,6 +1271,7 @@ export function CanvasView({
               <canvas ref={baseRef}    style={cvStyles.canvasLayered} width={artboardW} height={artboardH}/>
               <canvas ref={onionRef}   style={{ ...cvStyles.canvasLayered, opacity: showOnionSkin ? 1 : 0 }} width={artboardW} height={artboardH}/>
               <canvas ref={ghostRef}   style={{ ...cvStyles.canvasLayered, opacity: ghost?.visible ? 1 : 0 }} width={artboardW} height={artboardH}/>
+              <canvas ref={traceRef}   style={cvStyles.canvasLayered} width={artboardW} height={artboardH} data-trace={trace ? 'on' : 'off'}/>
               <canvas ref={overlayRef} style={cvStyles.canvasLayered} width={artboardW} height={artboardH}/>
               <div
                 style={{ position: 'absolute', inset: 0, cursor: cursorCss }}

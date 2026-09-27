@@ -43,6 +43,7 @@ Sindri Pixel is preparing its first cross-platform beta. Native Linux, macOS, an
 | 🏷️ **Animation tags** | Name frame ranges (idle, run, attack) with forward, reverse or ping-pong playback; loop one while you work. Sheet export writes Aseprite-format JSON with the tags for engine importers. |
 | 🔗 **Linked cels** | Frames can share a layer's drawing — duplicate a frame as linked, or link a layer to the previous frame — so parts that don't move are drawn and fixed once. |
 | 🎨 **Palette tools** | Double-click a swatch to recolour it everywhere, live, in one undo step. Import and export `.gpl`, `.hex` (Lospec) and `.pal` palettes. |
+| 🎓 **Lessons** | Hands-on tutorials inside the editor: each step spotlights what it's about, shows an example to trace, and checks your drawing live, moving on when you've got it. Your own sprite waits untouched. |
 | ⌨️ **Command palette + shortcuts** | `⌘K` fuzzy command palette and a complete keyboard map for tools, files, view, and timeline. |
 | 💾 **Autosave & crash recovery** | Work is continuously snapshotted; reopen after a crash and pick up exactly where you left off. |
 | 📚 **Interactive lessons** | A built-in tutorial library with a guided player *and* an authoring mode to build your own lessons. |

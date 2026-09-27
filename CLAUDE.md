@@ -67,6 +67,12 @@ Frontend (`src/`):
   assumed), anchoring frames on a shared canvas (feet/center), sprite-sheet
   packing + Aseprite-style JSON, a GIF encoder, `.spr` export, and the
   shared-pixel-size grid policy. Has tests.
+- `lib/lessons/` — the tutorial system as data: the lesson format
+  (`types.ts`), the pure check engine that evaluates a step against the
+  editor state (`checks.ts`), lesson-file validation (`validate.ts`) and the
+  built-in lessons (`builtin.ts`, whose tests play each step against its own
+  example art). `components/Tutorial.tsx` renders the library and the player
+  lane; `App.tsx` puts the learner's sprite aside while a lesson runs.
 - `lib/platform.ts` — Tauri detection and web fallbacks (download/file-pick).
 - `lib/storage.ts` — persistence helpers.
 
