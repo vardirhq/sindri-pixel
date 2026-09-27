@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from 'react';
 import type { Frame, Tool, ViewHelper, ToolOptions, Modifiers, SymmetryMode, LeftTab, RightTab, CenterTab, Density, TutorialMode, Proposal, AppStage, CursorPos, AppMenuState, SpotlightRect, AIStatus, PixelGrid } from './types';
 import { CANVAS_W, CANVAS_H, INITIAL_FRAMES, SWATCHES, buildProposalFrame, ZOOM_LEVELS } from './data';
 import { Topbar } from './components/Topbar';
@@ -30,6 +30,8 @@ import {
   type CheckResult, type EditorState, type Lesson, type MakerContext, type MakerDraft, type MakerSnapshot,
 } from './lib/lessons';
 import { readPalette, recolor, writePalette, type PaletteFormat } from './lib/palette';
+import { buildTileset, propagateTileEdit, suggestTileSize, tiledMap, tilesetImage } from './lib/tilemap';
+import { TilesPanel } from './components/TilesPanel';
 import { duplicateLinked, independentLayers, linkSize, linkToPrevious, propagateFrame, pruneLinks, unlinkLayer, writeLayerPixels } from './lib/cels';
 import { clampTags, freshTagName, nextPlayFrame, tagSequence, tagsAfterDelete, tagsAfterInsert, tagsAfterMove, validateTags, type FrameTag } from './lib/tags';
 import { gridSheet, sheetJson } from './lib/animation';
@@ -498,6 +500,9 @@ function App() {
 
   const [zoomIdx, setZoomIdx] = useState(4);
   const [cursor, setCursor] = useState<CursorPos | null>(null);
+  // Tilemaps: drawing edits every copy of a tile; a picked tile is stamped.
+  const [tileAuto, setTileAuto] = useState(true);
+  const [stampTile, setStampTile] = useState<number | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [cmdKOpen, setCmdKOpen] = useState(false);
@@ -622,11 +627,16 @@ function App() {
     setSelection(null);
   }, []);
 
+  // Tilemap auto-editing compares each write with the layer as it was when
+  // the edit began (every edit records history first).
+  const tileBaseRef = useRef<{ f: number; l: number; pixels: (string | null)[][] } | null>(null);
   const pushHistory = useCallback((opts?: { swatches?: boolean }) => {
+    const layerNow = frames[frameIdx]?.layers[activeLayerIdx];
+    tileBaseRef.current = layerNow ? { f: frameIdx, l: activeLayerIdx, pixels: layerNow.pixels } : null;
     pastRef.current = [...pastRef.current.slice(-49), { frames, w: canvasW, h: canvasH, tags, ...(opts?.swatches ? { swatches } : {}) }];
     futureRef.current = [];
     setDirty(true);
-  }, [frames, canvasW, canvasH, tags, swatches]);
+  }, [frames, canvasW, canvasH, tags, swatches, frameIdx, activeLayerIdx]);
 
   const undo = useCallback(() => {
     if (!pastRef.current.length) return;
@@ -709,9 +719,19 @@ function App() {
   }, [isPlaying, frames, frameIdx, centerTab, tags, playTagId]);
 
   // Linked cels: the write reaches every layer sharing this one's drawing.
+  // On a tilemap layer (unless stamping tiles, or "edit every copy" is off)
+  // it also reaches every copy of the tiles it changed.
+  const tileStamping = !!toolOptions.brush && !!toolOptions.brushGrid;
   const updateActiveLayerPixels = useCallback((newPixels: (string | null)[][]) => {
-    setFrames((fs) => writeLayerPixels(fs, frameIdx, activeLayerIdx, newPixels));
-  }, [frameIdx, activeLayerIdx]);
+    setFrames((fs) => {
+      const tm = fs[frameIdx]?.layers[activeLayerIdx]?.tilemap;
+      const base = tileBaseRef.current;
+      const px = tm && tileAuto && !tileStamping && base && base.f === frameIdx && base.l === activeLayerIdx && base.pixels.length === newPixels.length
+        ? propagateTileEdit(base.pixels, newPixels, tm)
+        : newPixels;
+      return writeLayerPixels(fs, frameIdx, activeLayerIdx, px);
+    });
+  }, [frameIdx, activeLayerIdx, tileAuto, tileStamping]);
 
   // ── Clipboard operations ───────────────────────────────────────────────────
   const copySelection = useCallback(() => {
@@ -1941,6 +1961,99 @@ function App() {
     setRecovery(null);
   }, []);
 
+  // ── Tilemaps ───────────────────────────────────────────────────────────────
+  const activeLayer = frames[frameIdx]?.layers[activeLayerIdx];
+  const activeTilemap = activeLayer?.tilemap ?? null;
+  const tileset = useMemo(
+    () => (activeLayer?.tilemap ? buildTileset([activeLayer.pixels], activeLayer.tilemap) : null),
+    [activeLayer?.pixels, activeLayer?.tilemap],
+  );
+  // The size guess re-runs as the art changes, a beat behind the strokes.
+  const deferredPixels = useDeferredValue(activeLayer?.pixels);
+  const suggestedTileSize = useMemo(
+    () => (rightTab === 'layers' && deferredPixels && !activeTilemap ? suggestTileSize(deferredPixels) : 16),
+    [deferredPixels, activeTilemap, rightTab],
+  );
+  // The grid, and under the cursor: every copy a stroke will change (or,
+  // stamping, the cell the tile will land in).
+  const tileGrid = useMemo(() => {
+    if (!activeTilemap || !tileset) return null;
+    const { tw, th } = activeTilemap;
+    const hover: [number, number] | null = cursor && cursor.x >= 0 && cursor.y >= 0 && cursor.x < canvasW && cursor.y < canvasH
+      ? [Math.floor(cursor.x / tw), Math.floor(cursor.y / th)] : null;
+    const twins: [number, number][] = [];
+    if (hover && tileStamping) twins.push(hover);
+    else if (hover && tileAuto) {
+      const ref = tileset.maps[0][hover[1]]?.[hover[0]];
+      if (ref?.tile) tileset.maps[0].forEach((row, cy) => row.forEach((r, cx) => { if (r.tile === ref.tile) twins.push([cx, cy]); }));
+    }
+    return { tw, th, hover, twins };
+  }, [activeTilemap, tileset, cursor, canvasW, canvasH, tileAuto, tileStamping]);
+
+  const setTileSize = (size: { tw: number; th: number } | null) => {
+    pushHistory();
+    setFrames((fs) => fs.map((f, i) => (i !== frameIdx ? f : {
+      ...f,
+      layers: f.layers.map((l, k) => {
+        if (k !== activeLayerIdx) return l;
+        if (size) return { ...l, tilemap: size };
+        const { tilemap: _t, ...rest } = l;
+        return rest;
+      }),
+    })));
+  };
+
+  const chooseStampTile = (t: number | null) => {
+    if (t === null || !tileset?.tiles[t] || !activeTilemap) {
+      setStampTile(null);
+      setToolOptions((o) => (o.brushGrid ? { ...o, brush: null, brushGrid: null } : o));
+      return;
+    }
+    setStampTile(t);
+    setToolOptions((o) => ({ ...o, brush: tileset.tiles[t], brushOwnColors: true, brushGrid: activeTilemap }));
+    chooseTool('pencil');
+  };
+  // Stamping ends with the brush, or on a layer that isn't this tilemap.
+  useEffect(() => {
+    if (!tileStamping) { setStampTile(null); return; }
+    const g = toolOptions.brushGrid;
+    if (!activeTilemap || g?.tw !== activeTilemap.tw || g?.th !== activeTilemap.th) {
+      setStampTile(null);
+      setToolOptions((o) => ({ ...o, brush: null, brushGrid: null }));
+    }
+  }, [tileStamping, activeTilemap, toolOptions.brushGrid]);
+
+  // Tileset PNG + Tiled map (.tmj) of this frame's tilemap layers of the
+  // active layer's tile size, sharing one tileset.
+  const exportTilemap = useCallback(async () => {
+    const tm = activeTilemap;
+    const frame = frames[frameIdx];
+    if (!tm || !frame) return;
+    const layers = frame.layers.filter((l) => l.tilemap && l.tilemap.tw === tm.tw && l.tilemap.th === tm.th);
+    const set = buildTileset(layers.map((l) => l.pixels), tm);
+    if (set.tiles.length < 2) return;
+    const img = tilesetImage(set, tm);
+    const png = compositeSpriteFrame({ id: 'tiles', duration: 0, layers: [{ id: 'tiles', name: 'tiles', visible: true, opacity: 1, pixels: img.pixels }] }, img.w, img.h);
+    const stem = projectName.replace(/\.spr$/i, '');
+    const describe = (image: string) => JSON.stringify(tiledMap(set, tm, layers.map((l) => l.name), { name: image, ...img }, stem), null, 2);
+    try {
+      if (!IS_TAURI) {
+        downloadBytes(await encodePngInBrowser(png, img.w, img.h, 1), `${stem}_tiles.png`, 'image/png');
+        downloadText(describe(`${stem}_tiles.png`), `${stem}.tmj`);
+        return;
+      }
+      const path = await saveDialog({ title: 'Export tilemap', filters: [{ name: 'Tiled map', extensions: ['tmj'] }], defaultPath: `${stem}.tmj` });
+      if (!path) return;
+      const base = path.replace(/\.tmj$/i, '');
+      const imagePath = `${base}_tiles.png`;
+      await invoke('export_png', { path: imagePath, width: img.w, height: img.h, pixels: png, scale: 1 });
+      await invoke('write_sprite_file', { path: `${base}.tmj`, content: describe(imagePath.split(/[/\\]/).pop() ?? `${stem}_tiles.png`) });
+    } catch (err) {
+      console.error('exportTilemap failed', err);
+      window.alert(err instanceof Error ? err.message : 'Could not export the tilemap.');
+    }
+  }, [activeTilemap, frames, frameIdx, projectName]);
+
   // ── Context menu builders ─────────────────────────────────────────────────
   // ── Custom brush: the selected pixels of the active layer ─────────────────
   const captureBrush = useCallback(() => {
@@ -1948,7 +2061,7 @@ function App() {
     if (!selection || !layer) return;
     const brush = brushFromSelection(layer.pixels, selection);
     if (!brush) { window.alert('The selection has no painted pixels on this layer to make a brush from.'); return; }
-    setToolOptions((o) => ({ ...o, brush }));
+    setToolOptions((o) => ({ ...o, brush, brushGrid: null }));
     setSelection(null);
     setTool('pencil');
   }, [frames, frameIdx, activeLayerIdx, selection]);
@@ -2288,7 +2401,7 @@ function App() {
             modifiers={modifiers}
             onModifierToggle={(k) => { if (k === 'tile') setModifiers((m) => ({ ...m, tile: !m.tile })); }}
             onSymmetryChange={(mode: SymmetryMode) => setModifiers((m) => ({ ...m, symmetry: mode }))}
-            toolOptions={toolOptions} onToolOptionChange={(k, v) => setToolOptions((o) => ({ ...o, [k]: v }))}
+            toolOptions={toolOptions} onToolOptionChange={(k, v) => setToolOptions((o) => ({ ...o, [k]: v, ...(k === 'brush' ? { brushGrid: null } : {}) }))}
             activeTab={leftTab} onTabChange={setLeftTab}
           />
         )}
@@ -2307,6 +2420,7 @@ function App() {
         <CanvasView
           frames={frames} frameIdx={frameIdx} activeLayerIdx={activeLayerIdx}
           palette={swatches}
+          tileGrid={tileGrid}
           trace={tutorialMode === 'playing' && showLessonExample && lessonSpot?.example && lessonSpot.example.length === canvasH ? lessonSpot.example : null}
           tool={tool} color={color} toolOptions={toolOptions} modifiers={modifiers} helper={helper}
           showGrid={showGrid} showOnionSkin={showOnionSkin}
@@ -2424,6 +2538,21 @@ function App() {
             onAcceptProposal={acceptProposal}
             onRejectProposal={rejectProposal}
             onRefineProposal={refineProposal}
+            layerExtra={activeLayer && tutorialMode !== 'playing' ? (
+              <TilesPanel
+                layer={activeLayer}
+                tileset={tileset}
+                suggested={suggestedTileSize}
+                canvasW={canvasW}
+                canvasH={canvasH}
+                auto={tileAuto}
+                onAutoChange={setTileAuto}
+                stampTile={stampTile}
+                onStampTile={chooseStampTile}
+                onSetTileSize={setTileSize}
+                onExport={() => void exportTilemap()}
+              />
+            ) : null}
           />
           </div>
           </div>

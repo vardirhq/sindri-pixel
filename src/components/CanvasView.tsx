@@ -34,6 +34,8 @@ interface CanvasViewProps {
   palette?: string[];
   /** Art to trace (a lesson's example), drawn faintly over the canvas. */
   trace?: (string | null)[][] | null;
+  /** A tilemap layer's grid, the hovered cell and the copies of its tile. */
+  tileGrid?: { tw: number; th: number; hover: [number, number] | null; twins: [number, number][] } | null;
   selection: { x0: number; y0: number; x1: number; y1: number; pixels?: [number, number][] } | null;
   onSelectionChange: (sel: { x0: number; y0: number; x1: number; y1: number; pixels?: [number, number][] } | null) => void;
   onContextMenu?: (x: number, y: number) => void;
@@ -195,7 +197,7 @@ export function CanvasView({
   onAcceptGhost, onRejectGhost, onRefineGhost,
   activeTab, onTabChange, isPlaying,
   zoomIdx, onZoomChange,
-  canvasW, canvasH, onStrokeBegin, palette = [], trace = null,
+  canvasW, canvasH, onStrokeBegin, palette = [], trace = null, tileGrid = null,
   selection, onSelectionChange,
   onContextMenu,
 }: CanvasViewProps) {
@@ -390,6 +392,27 @@ export function CanvasView({
       }
     }
 
+    if (tileGrid) {
+      const { tw, th } = tileGrid;
+      // Every copy of the hovered tile: what a stroke here will change.
+      for (const [cx, cy] of tileGrid.twins) {
+        const hot = tileGrid.hover && cx === tileGrid.hover[0] && cy === tileGrid.hover[1];
+        ctx.fillStyle = hot ? 'rgba(109,188,219,0.10)' : 'rgba(109,188,219,0.07)';
+        ctx.fillRect(cx * tw * zoom, cy * th * zoom, tw * zoom, th * zoom);
+        ctx.strokeStyle = hot ? 'rgba(109,188,219,0.95)' : 'rgba(109,188,219,0.55)';
+        ctx.lineWidth = hot ? 2 : 1;
+        ctx.strokeRect(cx * tw * zoom + 1, cy * th * zoom + 1, tw * zoom - 2, th * zoom - 2);
+      }
+      ctx.strokeStyle = 'rgba(109,188,219,0.28)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= canvasW; x += tw) {
+        ctx.beginPath(); ctx.moveTo(x * zoom + 0.5, 0); ctx.lineTo(x * zoom + 0.5, artboardH); ctx.stroke();
+      }
+      for (let y = 0; y <= canvasH; y += th) {
+        ctx.beginPath(); ctx.moveTo(0, y * zoom + 0.5); ctx.lineTo(artboardW, y * zoom + 0.5); ctx.stroke();
+      }
+    }
+
     if (helper === 'topdown') {
       ctx.strokeStyle = 'rgba(109,188,219,0.32)';
       ctx.lineWidth = 1;
@@ -485,7 +508,7 @@ export function CanvasView({
       ctx.lineDashOffset = 0;
       ctx.setLineDash([]);
     }
-  }, [showGrid, helper, modifiers.symmetry, zoom, artboardW, artboardH, drag, color, selection]);
+  }, [showGrid, helper, modifiers.symmetry, zoom, artboardW, artboardH, drag, color, selection, tileGrid]);
 
   useEffect(() => {
     if (activeTab !== 'preview' && activeTab !== 'split') return;
@@ -562,12 +585,14 @@ export function CanvasView({
       if (brush) {
         const bh = brush.length;
         const bw = brush[0]?.length ?? 0;
-        const ox = cx - Math.floor(bw / 2);
-        const oy = cy - Math.floor(bh / 2);
+        // A tile snaps to its grid cell and replaces the whole cell.
+        const grid = toolOptions.brushGrid;
+        const ox = grid ? Math.floor(cx / grid.tw) * grid.tw : cx - Math.floor(bw / 2);
+        const oy = grid ? Math.floor(cy / grid.th) * grid.th : cy - Math.floor(bh / 2);
         for (let by = 0; by < bh; by++) {
           for (let bx = 0; bx < bw; bx++) {
             const cell = brush[flipY ? bh - 1 - by : by][flipX ? bw - 1 - bx : bx];
-            if (!cell) continue;
+            if (!cell && !grid) continue;
             if (opts.brushColors && toolOptions.brushOwnColors) {
               const own = cell;
               const px = ox + bx, py = oy + by;

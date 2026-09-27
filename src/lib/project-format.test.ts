@@ -86,3 +86,13 @@ describe('linked cels in files', () => {
     expect(() => parseProject(bad)).toThrow(/invalid link/);
   });
 });
+
+describe('tilemap layers in files', () => {
+  it('round-trips the tile size and rejects a bad one', () => {
+    const tiled: Frame = { ...frame, layers: [{ ...frame.layers[0], tilemap: { tw: 16, th: 8 } }] };
+    const text = serializeProject({ name: 'map.spr', w: 2, h: 2, frames: [tiled], swatches: [] });
+    expect(parseProject(text).frames[0].layers[0].tilemap).toEqual({ tw: 16, th: 8 });
+    const bad = text.replace('"tw":16', '"tw":0');
+    expect(() => parseProject(bad)).toThrow(/tile size/);
+  });
+});

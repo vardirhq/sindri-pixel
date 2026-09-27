@@ -11,6 +11,9 @@ export interface Layer {
   /** Layers in different frames with the same link share one drawing
    *  (linked cels): editing one edits them all. */
   link?: string;
+  /** A tilemap layer: its pixels are cut into tiles of this size, and
+   *  drawing in one tile edits every copy of it (see lib/tilemap). */
+  tilemap?: { tw: number; th: number };
 }
 
 export interface Frame {
@@ -51,6 +54,9 @@ export interface ToolOptions {
   brush: PixelGrid | null;
   /** Custom brush paints its own colours (true) or the current colour. */
   brushOwnColors: boolean;
+  /** Stamp the custom brush snapped to this grid, whole (a tile from a
+   *  tilemap's tileset): empty brush pixels clear, not skip. */
+  brushGrid?: { tw: number; th: number } | null;
 }
 
 export type SymmetryMode = 'off' | 'v' | 'h' | 'both';

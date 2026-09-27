@@ -44,6 +44,8 @@ interface RightPaneProps {
   onAcceptProposal: (which: number | 'all') => void;
   onRejectProposal: (which?: number | 'all') => void;
   onRefineProposal: () => void;
+  /** Extra controls under the selected layer (the tilemap panel). */
+  layerExtra?: React.ReactNode;
 }
 
 interface LayersTabProps {
@@ -57,6 +59,7 @@ interface LayersTabProps {
   onMergeDown: () => void;
   onRenameLayer: (idx: number, name: string) => void;
   onContextMenu?: (idx: number, x: number, y: number) => void;
+  extra?: React.ReactNode;
 }
 
 interface PaletteTabProps {
@@ -234,7 +237,7 @@ function LayerThumb({ pixels }: { pixels: PixelGrid }) {
 
 function LayersTab({
   frame, activeLayerIdx,
-  onSelect, onAdd, onDelete, onToggleVisible, onSetOpacity, onMergeDown, onRenameLayer, onContextMenu,
+  onSelect, onAdd, onDelete, onToggleVisible, onSetOpacity, onMergeDown, onRenameLayer, onContextMenu, extra,
 }: LayersTabProps) {
   const [editingIdx, setEditingIdx] = React.useState<number | null>(null);
   const [editDraft, setEditDraft] = React.useState('');
@@ -306,6 +309,7 @@ function LayersTab({
                   {layer.name}
                 </span>
               )}
+              {layer.tilemap && <span style={{ ...rpStyles.layerMeta, color: 'var(--cyan)' }} title={`Tilemap, ${layer.tilemap.tw}×${layer.tilemap.th} tiles`} data-layer-tilemap>▦ {layer.tilemap.tw}</span>}
               <span style={rpStyles.layerMeta}>{Math.round(layer.opacity * 100)}%</span>
               <span
                 style={{ color: layer.visible ? 'var(--ink-3)' : 'var(--ink-4)', cursor: 'pointer' }}
@@ -332,6 +336,7 @@ function LayersTab({
                 />
               </div>
             )}
+            {selected && extra}
           </div>
         );
       })}
@@ -696,7 +701,7 @@ export function RightPane({
   onRecolorBegin, onRecolor, onImportPalette, onExportPalette,
   frameIdx, frameCount, frameDuration, onSetFrameDuration, onApplyDurationToAll,
   canvasW, canvasH,
-  proposal, onAcceptProposal, onRejectProposal, onRefineProposal,
+  proposal, onAcceptProposal, onRejectProposal, onRefineProposal, layerExtra,
 }: RightPaneProps) {
   // If proposal is active and visible, show the proposals lane instead of tabs
   if (proposal?.visible) {
@@ -740,6 +745,7 @@ export function RightPane({
             onMergeDown={onMergeDown}
             onRenameLayer={onRenameLayer}
             onContextMenu={onLayerContextMenu}
+            extra={layerExtra}
           />
         )}
         {activeTab === 'palette' && (

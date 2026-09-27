@@ -57,6 +57,12 @@ Frontend (`src/`):
 - `lib/project-format.ts` — the versioned `.spr` project format (with
   legacy-file migration and strict validation). Has tests.
 - `lib/sprite.ts` — sprite model, layer compositing, sprite-sheet layout. Has tests.
+- `lib/tilemap.ts` — tilemap layers (`Layer.tilemap`): the tileset is derived
+  from the pixels (distinct tiles, flips reused), auto-editing spreads a
+  stroke to every copy of the tiles it touched (`propagateTileEdit`, wired in
+  `App.updateActiveLayerPixels` against the layer as it was at `pushHistory`),
+  tile-size guessing, and tileset PNG + Tiled `.tmj` export. Has tests.
+  `components/TilesPanel.tsx` is its UI under the selected layer.
 - `lib/pixelReconstruction/` — reconstructs AI-generated rasters into true
   low-res sprites; `gridDetection.ts` is the core: it fits grid lines
   to the art's edges (so they follow drift and phase) and picks the cell size
