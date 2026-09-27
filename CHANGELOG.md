@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Recolour everywhere.** Double-click a swatch (in the palette or *In artwork*) and pick a new colour: every pixel of that colour, in every frame and layer, changes live as you pick. The whole session is one undo step, and undo restores the palette too. This is the everyday use of an "indexed" mode (palette swaps, fixing an AI import's near-miss colours) without converting the file.
+- **Palette files.** Import and export `.gpl` (GIMP, Aseprite, Krita), `.hex` (Lospec) and `.pal` (JASC) palettes from the palette tab. Importing replaces the palette (undoable). The desktop app saves through a new `write_palette_file` command that writes only those extensions, atomically.
 - **Custom brushes.** Select pixels and press ⌘B (or right-click → *Use selection as brush*) to paint with them. The pencil stamps the shape in its own colours, or in the current colour with *Paint brush colours* off. The eraser and Shade tool use it as a mask. Symmetry mirrors the brush along with its position. The tool options show a preview; × returns to the square brush.
 - **Shade tool** (`D`). Drag over pixels to step them one shade darker or lighter along their colour ramp; hold Shift to reverse. Ramps are found automatically: the next colour of the same family (hue and saturation, or greys) in the palette or already in the frame, so it works on imported AI sprites without sorting the palette. Skin and orange hair stay on their own ramps even though they share a hue. Each pixel changes once per stroke.
 - **Pixel-perfect strokes**, on by default. Freehand pencil, eraser and shade strokes drop the doubled "L-corner" pixels that mouse strokes leave, giving clean one-pixel lines. Toggle it in the tool options; it applies at brush size 1.

@@ -7,6 +7,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::read_sprite_file,
             commands::write_sprite_file,
+            commands::write_palette_file,
             commands::export_png,
             commands::export_gif,
             commands::import_png,

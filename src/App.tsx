@@ -25,6 +25,7 @@ import type { RecentFile, SavedTemplate, AutosaveSnapshot } from './lib/storage'
 import { IS_TAURI, downloadBytes, downloadText, pickFile, encodePngInBrowser, decodePngInBrowser } from './lib/platform';
 import { parseProject, serializeProject } from './lib/project-format';
 import { brushFromSelection } from './lib/drawing';
+import { readPalette, recolor, writePalette, type PaletteFormat } from './lib/palette';
 import { duplicateLinked, independentLayers, linkSize, linkToPrevious, propagateFrame, pruneLinks, unlinkLayer, writeLayerPixels } from './lib/cels';
 import { clampTags, freshTagName, nextPlayFrame, tagSequence, tagsAfterDelete, tagsAfterInsert, tagsAfterMove, validateTags, type FrameTag } from './lib/tags';
 import { gridSheet, sheetJson } from './lib/animation';
@@ -87,6 +88,9 @@ interface HistorySnapshot {
   w: number;
   h: number;
   tags: FrameTag[];
+  /** Set only by edits that change the palette too (recolour, palette
+   *  import); undoing them restores it. Other steps leave the palette be. */
+  swatches?: string[];
 }
 
 function makeProposal(prompt: string): Proposal {
@@ -569,6 +573,7 @@ function App() {
   const applySnapshot = useCallback((snap: HistorySnapshot) => {
     setFrames(snap.frames);
     setTags(snap.tags);
+    if (snap.swatches) setSwatches(snap.swatches);
     setCanvasW(snap.w);
     setCanvasH(snap.h);
     setFrameIdx((i) => Math.max(0, Math.min(i, snap.frames.length - 1)));
@@ -579,27 +584,27 @@ function App() {
     setSelection(null);
   }, []);
 
-  const pushHistory = useCallback(() => {
-    pastRef.current = [...pastRef.current.slice(-49), { frames, w: canvasW, h: canvasH, tags }];
+  const pushHistory = useCallback((opts?: { swatches?: boolean }) => {
+    pastRef.current = [...pastRef.current.slice(-49), { frames, w: canvasW, h: canvasH, tags, ...(opts?.swatches ? { swatches } : {}) }];
     futureRef.current = [];
     setDirty(true);
-  }, [frames, canvasW, canvasH, tags]);
+  }, [frames, canvasW, canvasH, tags, swatches]);
 
   const undo = useCallback(() => {
     if (!pastRef.current.length) return;
     const prev = pastRef.current[pastRef.current.length - 1];
-    futureRef.current = [{ frames, w: canvasW, h: canvasH, tags }, ...futureRef.current.slice(0, 49)];
+    futureRef.current = [{ frames, w: canvasW, h: canvasH, tags, ...(prev.swatches ? { swatches } : {}) }, ...futureRef.current.slice(0, 49)];
     pastRef.current = pastRef.current.slice(0, -1);
     applySnapshot(prev);
-  }, [frames, canvasW, canvasH, tags, applySnapshot]);
+  }, [frames, canvasW, canvasH, tags, swatches, applySnapshot]);
 
   const redo = useCallback(() => {
     if (!futureRef.current.length) return;
     const next = futureRef.current[0];
-    pastRef.current = [...pastRef.current.slice(-49), { frames, w: canvasW, h: canvasH, tags }];
+    pastRef.current = [...pastRef.current.slice(-49), { frames, w: canvasW, h: canvasH, tags, ...(next.swatches ? { swatches } : {}) }];
     futureRef.current = futureRef.current.slice(1);
     applySnapshot(next);
-  }, [frames, canvasW, canvasH, tags, applySnapshot]);
+  }, [frames, canvasW, canvasH, tags, swatches, applySnapshot]);
 
   useEffect(() => {
     if (tutorialMode !== 'playing') { setSpotlightRect(null); return; }
@@ -1143,6 +1148,52 @@ function App() {
     if (swatches.includes(color)) return;
     setSwatches((s) => [...s, color]);
   };
+
+  // ── Palette: recolour everywhere, palette files ────────────────────────────
+  // A recolour session (swatch editor open) is one undo step, however many
+  // colours the picker passes through on the way.
+  const beginRecolor = useCallback(() => pushHistory({ swatches: true }), [pushHistory]);
+
+  const recolorEverywhere = useCallback((from: string, to: string) => {
+    const a = from.toLowerCase();
+    const b = to.toLowerCase();
+    if (a === b) return;
+    setFrames((fs) => recolor(fs, a, b));
+    setSwatches((sw) => {
+      const next = sw.map((c) => (c.toLowerCase() === a ? b : c));
+      return next.filter((c, i) => next.indexOf(c) === i);
+    });
+    setColor((c) => (c.toLowerCase() === a ? b : c));
+  }, []);
+
+  const importPalette = useCallback(async () => {
+    try {
+      const file = await pickFile('.gpl,.hex,.pal,.txt');
+      if (!file) return;
+      const colors = readPalette(await file.text());
+      pushHistory({ swatches: true });
+      setSwatches(colors);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Could not read that palette.');
+    }
+  }, [pushHistory]);
+
+  const exportPalette = useCallback(async (format: PaletteFormat) => {
+    const stem = projectName.replace(/\.spr$/i, '');
+    const content = writePalette(swatches, format, stem);
+    try {
+      if (!IS_TAURI) { downloadText(content, `${stem}.${format}`); return; }
+      const path = await saveDialog({
+        title: 'Export palette',
+        filters: [{ name: format === 'gpl' ? 'GIMP palette' : format === 'hex' ? 'Hex palette' : 'JASC palette', extensions: [format] }],
+        defaultPath: `${stem}.${format}`,
+      });
+      if (!path) return;
+      await invoke('write_palette_file', { path: /\.(gpl|hex|pal)$/i.test(path) ? path : `${path}.${format}`, content });
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Could not export the palette.');
+    }
+  }, [projectName, swatches]);
 
   // Distinct colors currently painted anywhere in the sprite.
   const usedColors = useMemo(() => {
@@ -1966,6 +2017,8 @@ function App() {
             color={color} onColorChange={setColor}
             swatches={swatches} onAddSwatch={addSwatch} onSwatchContextMenu={openSwatchContextMenu}
             usedColors={usedColors}
+            onRecolorBegin={beginRecolor} onRecolor={recolorEverywhere}
+            onImportPalette={importPalette} onExportPalette={exportPalette}
             frameIdx={frameIdx} frameCount={frames.length}
             frameDuration={frames[frameIdx]?.duration ?? 120} onSetFrameDuration={setFrameDuration}
             onApplyDurationToAll={applyDurationToAll}
