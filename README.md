@@ -34,12 +34,13 @@ Sindri Pixel is preparing its first cross-platform beta. Native Linux, macOS, an
 
 | | |
 |---|---|
-| 🎨 **12 drawing tools** | Pencil, eraser, flood fill, color picker, line, rectangle, circle, marquee select, magic wand, lasso, move, and pan. |
+| 🎨 **13 drawing tools** | Pencil, eraser, shade, flood fill, color picker, line, rectangle, circle, marquee select, magic wand, lasso, move, and pan. Freehand strokes are pixel-perfect (no doubled corner pixels). |
 | 🎞️ **Real animation timeline** | Multi-frame sprites with per-frame timing (ms), reordering, play/pause, and **onion skinning** of adjacent frames. |
 | 🧅 **Layers per frame** | Independent layers with visibility and opacity, composited live on the canvas. |
 | 🔁 **Symmetry & tiling** | Vertical, horizontal, or four-way mirrored drawing, plus a tile-preview mode for seamless textures. |
 | 🎯 **Precision surface** | Zoom levels from 4× to 32×, pixel grid overlay, a draggable minimap, and full undo/redo history. |
 | 🧩 **Palette profiles** | Ship-ready **Sindri**, **NES**, and **Game Boy** palettes, or start from an empty swatch set. |
+| 🏷️ **Animation tags** | Name frame ranges (idle, run, attack) with forward, reverse or ping-pong playback; loop one while you work. Sheet export writes Aseprite-format JSON with the tags for engine importers. |
 | 🔗 **Linked cels** | Frames can share a layer's drawing — duplicate a frame as linked, or link a layer to the previous frame — so parts that don't move are drawn and fixed once. |
 | ⌨️ **Command palette + shortcuts** | `⌘K` fuzzy command palette and a complete keyboard map for tools, files, view, and timeline. |
 | 💾 **Autosave & crash recovery** | Work is continuously snapshotted; reopen after a crash and pick up exactly where you left off. |
@@ -145,9 +146,12 @@ pnpm tauri build  # produce a native installer/binary
 <tr><td>Color picker</td><td align="center"><code>I</code></td><td>Rectangle</td><td align="center"><code>R</code></td></tr>
 <tr><td>Marquee select</td><td align="center"><code>V</code></td><td>Circle</td><td align="center"><code>C</code></td></tr>
 <tr><td>Move</td><td align="center"><code>M</code></td><td>Pan</td><td align="center"><code>H</code></td></tr>
+<tr><td>Shade</td><td align="center"><code>D</code></td><td></td><td></td></tr>
 </table>
 
-Tool options include brush size, filled vs. outlined shapes, "perfect" shape snapping, contiguous fill, and a fill tolerance threshold.
+Tool options include brush size, pixel-perfect strokes, filled vs. outlined shapes, "perfect" shape snapping, contiguous fill, and a fill tolerance threshold.
+
+**Shade** steps each pixel you drag over one shade darker (or lighter) along its colour ramp; hold Shift to reverse. Ramps are found automatically, with no palette sorting needed: the next colour of the same family (similar hue and saturation, or both greys) in the palette or already in the frame. Each pixel changes once per stroke, however often you pass over it.
 
 | Action | Shortcut | | Action | Shortcut |
 |---|---|---|---|---|

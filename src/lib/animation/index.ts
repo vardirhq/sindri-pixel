@@ -5,7 +5,7 @@
 
 export { anchorPoint, composeFrame, flipX, layoutFrames, opaqueBounds } from './layout';
 export type { Anchor, Bounds, Layout, PlacedFrameInput } from './layout';
-export { buildSheet, scaleImage, sheetGrid, sheetJson, toSprProject, MAX_SHEET_PIXELS } from './sheet';
+export { buildSheet, gridSheet, scaleImage, sheetGrid, sheetJson, toSprProject, MAX_SHEET_PIXELS } from './sheet';
 export type { Rect, Sheet, SheetColumns, SheetMeta, SheetOptions } from './sheet';
 export { encodeGif } from './gif';
 export type { GifOptions } from './gif';

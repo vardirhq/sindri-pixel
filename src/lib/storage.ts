@@ -93,6 +93,8 @@ export interface AutosaveSnapshot {
   // Frames are stored as opaque JSON — typed by the caller on restore.
   frames: unknown[];
   swatches: string[];
+  // Animation tags — opaque like frames; absent in older snapshots.
+  tags?: unknown[];
   dirty: boolean;
 }
 
