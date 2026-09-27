@@ -13,19 +13,22 @@ import { ContextMenu } from './components/ContextMenu';
 import type { ContextItem } from './components/ContextMenu';
 import { LoadingScreen, WelcomeScreen, NewProjectModal } from './components/Welcome';
 import type { TemplateConfig } from './components/Welcome';
-import { TutorialLibrary, TutorialPlayerLane, TutorialSpotlight, TutorialBuilderRibbon } from './components/Tutorial';
+import { TutorialLibrary, TutorialPlayerLane, TutorialSpotlight } from './components/Tutorial';
+import { MakerBar, MakerCourse, MakerPanel } from './components/maker/MakerPanel';
+import { Confetti } from './components/Confetti';
 import type { LessonPhase } from './components/Tutorial';
-import { BuilderStepList, BuilderStepForm, DEMO_LESSON, builderToLesson } from './components/BuilderPanes';
-import type { BuilderLesson } from './components/BuilderPanes';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { getRecents, pushRecent, getSavedTemplates, saveTemplate, readAutosave, writeAutosave, clearAutosave, getCompletedLessons, markLessonCompleted } from './lib/storage';
+import { getRecents, pushRecent, getSavedTemplates, saveTemplate, readAutosave, writeAutosave, clearAutosave, getCompletedLessons, markLessonCompleted, readLessonDraft, writeLessonDraft } from './lib/storage';
 import type { RecentFile, SavedTemplate, AutosaveSnapshot } from './lib/storage';
 import { IS_TAURI, downloadBytes, downloadText, pickFile, encodePngInBrowser, decodePngInBrowser } from './lib/platform';
 import { parseProject, serializeProject } from './lib/project-format';
 import { brushFromSelection } from './lib/drawing';
-import { BUILTIN_LESSONS, evaluateStep, stepDone, toolName, type CheckResult, type EditorState, type Lesson } from './lib/lessons';
+import {
+  BUILTIN_LESSONS, draftToLesson, evaluateStep, newDraft, newStepId, recordStep, snapshotBefore, stepDone, toolName, touch,
+  type CheckResult, type EditorState, type Lesson, type MakerContext, type MakerDraft, type MakerSnapshot,
+} from './lib/lessons';
 import { readPalette, recolor, writePalette, type PaletteFormat } from './lib/palette';
 import { duplicateLinked, independentLayers, linkSize, linkToPrevious, propagateFrame, pruneLinks, unlinkLayer, writeLayerPixels } from './lib/cels';
 import { clampTags, freshTagName, nextPlayFrame, tagSequence, tagsAfterDelete, tagsAfterInsert, tagsAfterMove, validateTags, type FrameTag } from './lib/tags';
@@ -582,8 +585,17 @@ function App() {
   const futureRef = useRef<HistorySnapshot[]>([]);
   const [spotlightRect, setSpotlightRect] = useState<SpotlightRect | null>(null);
 
-  const [draftLesson, setDraftLesson] = useState<BuilderLesson>(DEMO_LESSON);
-  const [builderStepIdx, setBuilderStepIdx] = useState(1);
+  // ── Lesson maker ──
+  // The draft being made, the selected card (-1 = start), and an in-progress
+  // recording: the document and settings when Record was pressed.
+  const [makerDraft, setMakerDraft] = useState<MakerDraft | null>(() => readLessonDraft() as MakerDraft | null);
+  const [makerSel, setMakerSel] = useState(-1);
+  const [makerRec, setMakerRec] = useState<{ before: MakerSnapshot; was: MakerContext; insertAt: number } | null>(null);
+  const [makerStamped, setMakerStamped] = useState<string | null>(null);
+  const [confetti, setConfetti] = useState(0);
+  // A maker's play test clears the draft only from step 1, with no skips.
+  const playFromStartRef = useRef(false);
+  const lessonSkippedRef = useRef(false);
 
   // ── History (undo / redo) ──────────────────────────────────────────────────
   // Snapshots capture frames AND canvas dimensions so undoing a resize/crop
@@ -1232,8 +1244,17 @@ function App() {
   };
 
   const exitLesson = () => {
+    if (lessonReturnTo === 'authoring') {
+      // Back to making: the maker's canvas, not the learner's sprite.
+      setActiveLesson(null);
+      setIsPlaying(false);
+      setLessonNotice(null);
+      if (makerDraft) loadDoc(snapshotBefore(makerDraft, makerSel + 1));
+      setTutorialMode('authoring');
+      return;
+    }
     restoreLessonStash();
-    setTutorialMode(lessonReturnTo === 'authoring' ? 'authoring' : 'off');
+    setTutorialMode('off');
   };
 
   const lessonStep = activeLesson && lessonPhase === 'step' ? activeLesson.steps[lessonStepIdx] ?? null : null;
@@ -1269,6 +1290,11 @@ function App() {
     if (lessonReturnTo === 'off') {
       markLessonCompleted(activeLesson.id);
       setCompletedLessons(getCompletedLessons());
+      setConfetti((n) => n + 1);
+    } else if (playFromStartRef.current && !lessonSkippedRef.current) {
+      // The maker beat their own lesson: it's cleared (and shareable).
+      setMakerDraft((d) => (d ? { ...d, cleared: true } : d));
+      setConfetti((n) => n + 1);
     }
   }, [activeLesson, lessonStepIdx, lessonReturnTo]);
 
@@ -1302,6 +1328,168 @@ function App() {
     setLessonNotice(null);
     setTool(t);
   }, [tutorialMode, lessonStep]);
+
+  // ── Lesson maker ───────────────────────────────────────────────────────────
+  const snapshotDoc = (): MakerSnapshot => ({ frames, w: canvasW, h: canvasH, swatches, tags, frameIdx });
+  const makerContext = (): MakerContext => ({ tool, color, onion: showOnionSkin, symmetry: modifiers.symmetry });
+
+  // Show a document on the canvas (a step's result, the start…). Undo starts
+  // fresh: history shouldn't reach across steps.
+  function loadDoc(d: MakerSnapshot) {
+    if (d.w !== canvasW || d.h !== canvasH) setZoomIdx(fitZoomIdx(d.w, d.h));
+    setFrames(d.frames);
+    setCanvasW(d.w);
+    setCanvasH(d.h);
+    setSwatches(d.swatches);
+    setTags(d.tags);
+    setPlayTagId(null);
+    setFrameIdx(Math.min(d.frameIdx, d.frames.length - 1));
+    setActiveLayerIdx(0);
+    setSelection(null);
+    pastRef.current = [];
+    futureRef.current = [];
+  }
+
+  const blankDoc = (w: number, h: number, palette: string[]): MakerSnapshot => ({
+    frames: [{ id: 'frame_0', duration: 140, layers: [{ id: 'l0', name: 'layer 1', visible: true, opacity: 1, pixels: Array.from({ length: h }, () => Array(w).fill(null)) }] }],
+    w, h, swatches: palette, tags: [], frameIdx: 0,
+  });
+
+  // Making happens on its own canvas: the sprite is put aside, as in a lesson.
+  function enterMaker() {
+    if (!lessonStashRef.current) {
+      lessonStashRef.current = {
+        frames, w: canvasW, h: canvasH, swatches, tags, name: projectName, path: currentFilePath, dirty,
+        past: pastRef.current, future: futureRef.current, frameIdx, layerIdx: activeLayerIdx,
+        onion: showOnionSkin, symmetry: modifiers.symmetry, zoomIdx,
+      };
+    }
+    const draft = makerDraft ?? newDraft(blankDoc(16, 16, swatches));
+    if (!makerDraft) setMakerDraft(draft);
+    const sel = Math.min(makerSel, draft.steps.length - 1);
+    setMakerSel(sel);
+    loadDoc(snapshotBefore(draft, sel + 1));
+    setProjectName(`${draft.title}.spr`);
+    setCurrentFilePath(null);
+    setIsPlaying(false);
+    setRightTab('palette');
+    setTutorialMode('authoring');
+  }
+
+  const updateDraft = (patch: Partial<MakerDraft>) => setMakerDraft((d) => (d ? touch(d, patch) : d));
+
+  const makerActions = {
+    select: (i: number) => {
+      if (!makerDraft || makerRec) return;
+      setMakerSel(i);
+      loadDoc(snapshotBefore(makerDraft, i + 1));
+    },
+    record: () => {
+      if (!makerDraft) return;
+      setIsPlaying(false);
+      setMakerRec({ before: snapshotDoc(), was: makerContext(), insertAt: makerSel + 1 });
+    },
+    done: () => {
+      if (!makerDraft || !makerRec) return;
+      const after = snapshotDoc();
+      const r = recordStep(makerRec.before, after, makerRec.was, makerContext());
+      const step = { id: newStepId(), ...r, after };
+      const steps = [...makerDraft.steps];
+      steps.splice(makerRec.insertAt, 0, step);
+      updateDraft({ steps });
+      setMakerSel(makerRec.insertAt);
+      setMakerStamped(step.id);
+      setMakerRec(null);
+    },
+    cancel: () => {
+      if (!makerRec) return;
+      loadDoc(makerRec.before);
+      setMakerRec(null);
+    },
+    play: (from: number) => {
+      if (!makerDraft?.steps.length) return;
+      playFromStartRef.current = from === 0;
+      lessonSkippedRef.current = false;
+      startLesson(draftToLesson(makerDraft, from), { startAt: from, returnTo: 'authoring' });
+    },
+    changeStep: (i: number, patch: Partial<MakerDraft['steps'][number]>) => {
+      if (!makerDraft) return;
+      updateDraft({ steps: makerDraft.steps.map((s, k) => (k === i ? { ...s, ...patch } : s)) });
+    },
+    moveStep: (from: number, to: number) => {
+      if (!makerDraft) return;
+      const steps = [...makerDraft.steps];
+      const [moved] = steps.splice(from, 1);
+      steps.splice(to, 0, moved);
+      updateDraft({ steps });
+      setMakerSel(to);
+    },
+    deleteStep: (i: number) => {
+      if (!makerDraft) return;
+      const steps = makerDraft.steps.filter((_, k) => k !== i);
+      updateDraft({ steps });
+      const sel = Math.min(i, steps.length - 1);
+      setMakerSel(sel);
+      loadDoc(snapshotBefore({ ...makerDraft, steps }, sel + 1));
+    },
+    // Use the canvas as it is now as this step's result, and re-suggest its
+    // goals, keeping the author's wording.
+    recapture: (i: number) => {
+      if (!makerDraft) return;
+      const step = makerDraft.steps[i];
+      const r = recordStep(snapshotBefore(makerDraft, i), snapshotDoc(), makerContext(), makerContext());
+      makerActions.changeStep(i, { checks: r.checks.length ? r.checks : step.checks, region: r.region, example: r.example, tools: r.tools ?? step.tools, spotlight: r.spotlight ?? step.spotlight, after: snapshotDoc() });
+      setMakerStamped(step.id);
+    },
+    regionFromSelection: (i: number) => {
+      if (!selection) return;
+      const x = Math.min(selection.x0, selection.x1);
+      const y = Math.min(selection.y0, selection.y1);
+      makerActions.changeStep(i, { region: { x, y, w: Math.abs(selection.x1 - selection.x0) + 1, h: Math.abs(selection.y1 - selection.y0) + 1 }, spotlight: 'canvas' });
+      setSelection(null);
+    },
+    startCanvas: (kind: 'blank16' | 'blank32' | 'mine') => {
+      if (!makerDraft) return;
+      const mine = lessonStashRef.current;
+      const start = kind === 'mine' && mine
+        ? { frames: mine.frames, w: mine.w, h: mine.h, swatches: mine.swatches, tags: [], frameIdx: 0 }
+        : blankDoc(kind === 'blank32' ? 32 : 16, kind === 'blank32' ? 32 : 16, swatches);
+      updateDraft({ start });
+      loadDoc(start);
+    },
+    exportLesson: async () => {
+      if (!makerDraft?.cleared) return;
+      const lesson = draftToLesson(makerDraft);
+      const file = `${makerDraft.title.trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'lesson'}.sindri-lesson`;
+      const content = JSON.stringify(lesson);
+      try {
+        if (!IS_TAURI) { downloadText(content, file); return; }
+        const path = await saveDialog({ title: 'Share lesson', filters: [{ name: 'Sindri lesson', extensions: ['sindri-lesson'] }], defaultPath: file });
+        if (path) await invoke('write_sprite_file', { path, content });
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : 'Could not save the lesson.');
+      }
+    },
+  };
+
+  // While making, the file name in the top bar is the lesson's name.
+  useEffect(() => {
+    if (tutorialMode === 'authoring' && makerDraft) setProjectName(`${makerDraft.title || 'Untitled lesson'}.spr`);
+  }, [tutorialMode, makerDraft?.title]);
+
+  // Keep the draft safe across reloads.
+  useEffect(() => {
+    if (!makerDraft) return;
+    const id = setTimeout(() => writeLessonDraft(makerDraft), 600);
+    return () => clearTimeout(id);
+  }, [makerDraft]);
+
+  // The stamp animation plays once.
+  useEffect(() => {
+    if (!makerStamped) return;
+    const id = setTimeout(() => setMakerStamped(null), 500);
+    return () => clearTimeout(id);
+  }, [makerStamped]);
 
   // ── Palette: recolour everywhere, palette files ────────────────────────────
   // A recolour session (swatch editor open) is one undo step, however many
@@ -1953,9 +2141,13 @@ function App() {
       else setProposal(null);
     }
     if (k === 'tutorialMode') {
+      if (v === 'authoring' && tutorialMode !== 'authoring') { enterMaker(); return; }
       setTutorialMode(v as TutorialMode);
-      // Leaving a lesson by any route gives the learner their sprite back.
-      if (tutorialMode === 'playing' && v !== 'playing') restoreLessonStash();
+      // Leaving a lesson or the maker by any route gives the sprite back.
+      if ((tutorialMode === 'playing' || tutorialMode === 'authoring') && v !== 'playing' && v !== 'authoring') {
+        setMakerRec(null);
+        restoreLessonStash();
+      }
     }
   };
 
@@ -2025,31 +2217,7 @@ function App() {
       </div>
 
       <div style={appStyles.left}>
-        {tutorialMode === 'authoring' ? (
-          <BuilderStepList
-            lesson={draftLesson}
-            selectedIdx={builderStepIdx}
-            onSelect={setBuilderStepIdx}
-            onAdd={(kind) => {
-              const newStep = {
-                id: 's' + Date.now(),
-                kind,
-                title: 'New step',
-                goalSummary: '',
-                instruction: '',
-                hint: '',
-                spotlightTarget: 'canvas' as const,
-                highlightRegion: null,
-                validation: { type: 'tool_used' as const, requiredTool: 'pencil' as Tool },
-                allowedTools: [] as Tool[],
-                hasExampleArt: false,
-              };
-              const next: BuilderLesson = { ...draftLesson, steps: [...draftLesson.steps, newStep] };
-              setDraftLesson(next);
-              setBuilderStepIdx(next.steps.length - 1);
-            }}
-          />
-        ) : (
+        {(
           <ToolsPane
             tool={tool} onToolChange={chooseTool}
             allowedTools={tutorialMode === 'playing' ? lessonSpot?.tools ?? null : null}
@@ -2064,10 +2232,13 @@ function App() {
       </div>
 
       <div style={{ ...appStyles.center, position: 'relative' }} ref={canvasShellRef}>
-        {tutorialMode === 'authoring' && (
-          <TutorialBuilderRibbon
+        {tutorialMode === 'authoring' && makerDraft && (
+          <MakerBar
+            title={makerDraft.title}
+            recording={!!makerRec}
+            stepCount={makerDraft.steps.length}
+            onPlay={() => makerActions.play(0)}
             onExit={() => setTweak('tutorialMode', 'off')}
-            onPreview={() => startLesson(builderToLesson(draftLesson, canvasW, canvasH), { startAt: 0, returnTo: 'authoring', keepCanvas: true })}
           />
         )}
         <CanvasView
@@ -2091,6 +2262,21 @@ function App() {
           selection={selection} onSelectionChange={setSelection}
           onContextMenu={openCanvasContextMenu}
         />
+        {tutorialMode === 'authoring' && makerDraft && (
+          <MakerCourse
+            draft={makerDraft}
+            selected={makerSel}
+            recording={!!makerRec}
+            stamped={makerStamped}
+            onSelect={makerActions.select}
+            onRecord={makerActions.record}
+            onDone={makerActions.done}
+            onCancel={makerActions.cancel}
+            onPlay={makerActions.play}
+            onMoveStep={makerActions.moveStep}
+            onDeleteStep={makerActions.deleteStep}
+          />
+        )}
         <Timeline
           frames={frames} frameIdx={frameIdx}
           onSelect={setFrameIdx} onAdd={addFrame} onDuplicate={duplicateFrame} onDelete={deleteFrame}
@@ -2114,32 +2300,26 @@ function App() {
       </div>
 
       <div style={{ ...appStyles.right, position: 'relative', zIndex: tutorialMode === 'playing' ? 60 : 'auto' }}>
-        {tutorialMode === 'authoring' ? (
-          <BuilderStepForm
-            lesson={draftLesson}
-            step={draftLesson.steps[builderStepIdx]}
-            stepIdx={builderStepIdx}
-            onChange={(updated) => {
-              const next: BuilderLesson = {
-                ...draftLesson,
-                steps: draftLesson.steps.map((s, i) => i === builderStepIdx ? updated : s),
-              };
-              setDraftLesson(next);
-            }}
-            onCaptureRegion={() => {}}
-            onClearRegion={() => {
-              const updated = { ...draftLesson.steps[builderStepIdx], highlightRegion: null };
-              const next: BuilderLesson = {
-                ...draftLesson,
-                steps: draftLesson.steps.map((s, i) => i === builderStepIdx ? updated : s),
-              };
-              setDraftLesson(next);
-            }}
-            onPlayTest={() => startLesson(builderToLesson(draftLesson, canvasW, canvasH), { startAt: builderStepIdx, returnTo: 'authoring', keepCanvas: true })}
-            onAskAI={() => setCmdKOpen(true)}
-          />
-        ) : (
+        {(
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          {tutorialMode === 'authoring' && makerDraft && (
+            <div style={{ flex: '1 1 50%', minHeight: 0, borderBottom: '1px solid var(--rule-2)' }}>
+            <MakerPanel
+              draft={makerDraft}
+              selected={makerSel}
+              recording={!!makerRec}
+              stamped={makerStamped}
+              editor={{ tool, color, frameCount: frames.length, tagCount: tags.length, onion: showOnionSkin, symmetry: modifiers.symmetry, hasSelection: !!selection }}
+              onPlay={makerActions.play}
+              onChange={updateDraft}
+              onChangeStep={makerActions.changeStep}
+              onRecapture={makerActions.recapture}
+              onRegionFromSelection={makerActions.regionFromSelection}
+              onStartCanvas={makerActions.startCanvas}
+              onExport={() => void makerActions.exportLesson()}
+            />
+            </div>
+          )}
           {tutorialMode === 'playing' && activeLesson && (
             <TutorialPlayerLane
               lesson={activeLesson}
@@ -2152,10 +2332,13 @@ function App() {
               onToggleExample={() => setShowLessonExample((v) => !v)}
               onBegin={() => { setLessonPhase('step'); setLessonStepIdx(0); }}
               onPrev={() => { lessonNavRef.current = 'manual'; setLessonStepIdx((i) => Math.max(0, i - 1)); }}
-              onNext={advanceLesson}
+              onNext={() => {
+                if (lessonStep && lessonStep.checks.length && !lessonStepComplete) lessonSkippedRef.current = true;
+                advanceLesson();
+              }}
               onJump={(i) => { lessonNavRef.current = 'manual'; setLessonPhase('step'); setLessonStepIdx(i); }}
               onExit={exitLesson}
-              exitLabel={lessonReturnTo === 'authoring' ? 'Back to builder' : 'Exit'}
+              exitLabel={lessonReturnTo === 'authoring' ? 'Back to maker' : 'Exit'}
             />
           )}
           <div style={{ flex: 1, minHeight: 0 }}>
@@ -2255,6 +2438,7 @@ function App() {
         }}
       />
 
+      <Confetti burst={confetti} />
       <TutorialLibrary
         open={tutorialMode === 'library'}
         lessons={BUILTIN_LESSONS}
