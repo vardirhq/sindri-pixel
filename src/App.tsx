@@ -13,20 +13,20 @@ import { ContextMenu } from './components/ContextMenu';
 import type { ContextItem } from './components/ContextMenu';
 import { LoadingScreen, WelcomeScreen, NewProjectModal } from './components/Welcome';
 import type { TemplateConfig } from './components/Welcome';
-import { TutorialLibrary, TutorialPlayerLane, TutorialSpotlight } from './components/Tutorial';
+import { TutorialLibrary, TutorialPlayerLane, TutorialSpotlight, type LibraryNotice, type LibraryTab } from './components/Tutorial';
 import { MakerBar, MakerCourse, MakerPanel } from './components/maker/MakerPanel';
 import { Confetti } from './components/Confetti';
 import type { LessonPhase } from './components/Tutorial';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { getRecents, pushRecent, getSavedTemplates, saveTemplate, readAutosave, writeAutosave, clearAutosave, getCompletedLessons, markLessonCompleted, readLessonDraft, writeLessonDraft } from './lib/storage';
+import { getRecents, pushRecent, getSavedTemplates, saveTemplate, readAutosave, writeAutosave, clearAutosave, getCompletedLessons, markLessonCompleted, readLessonDrafts, writeLessonDrafts, readImportedLessons, writeImportedLessons, getLessonAuthor, setLessonAuthor } from './lib/storage';
 import type { RecentFile, SavedTemplate, AutosaveSnapshot } from './lib/storage';
 import { IS_TAURI, downloadBytes, downloadText, pickFile, encodePngInBrowser, decodePngInBrowser } from './lib/platform';
 import { parseProject, serializeProject } from './lib/project-format';
 import { brushFromSelection } from './lib/drawing';
 import {
-  BUILTIN_LESSONS, draftToLesson, evaluateStep, newDraft, newStepId, recordStep, snapshotBefore, stepDone, toolName, touch,
+  BUILTIN_LESSONS, copyDraft, draftToLesson, importLesson, readDrafts, readImported, shelveDraft, evaluateStep, newDraft, newStepId, recordStep, snapshotBefore, stepDone, toolName, touch,
   type CheckResult, type EditorState, type Lesson, type MakerContext, type MakerDraft, type MakerSnapshot,
 } from './lib/lessons';
 import { readPalette, recolor, writePalette, type PaletteFormat } from './lib/palette';
@@ -588,7 +588,13 @@ function App() {
   // ── Lesson maker ──
   // The draft being made, the selected card (-1 = start), and an in-progress
   // recording: the document and settings when Record was pressed.
-  const [makerDraft, setMakerDraft] = useState<MakerDraft | null>(() => readLessonDraft() as MakerDraft | null);
+  const [makerDraft, setMakerDraft] = useState<MakerDraft | null>(null);
+  // The shelf: every lesson being made, and the lessons people shared.
+  const [lessonDrafts, setLessonDrafts] = useState<MakerDraft[]>(() => readDrafts(readLessonDrafts()));
+  const [importedLessons, setImportedLessons] = useState<Lesson[]>(() => readImported(readImportedLessons()));
+  const [libraryTab, setLibraryTab] = useState<LibraryTab>('all');
+  const [libraryNotice, setLibraryNotice] = useState<LibraryNotice | null>(null);
+  const [freshLessonId, setFreshLessonId] = useState<string | null>(null);
   const [makerSel, setMakerSel] = useState(-1);
   const [makerRec, setMakerRec] = useState<{ before: MakerSnapshot; was: MakerContext; insertAt: number } | null>(null);
   const [makerStamped, setMakerStamped] = useState<string | null>(null);
@@ -1356,7 +1362,7 @@ function App() {
   });
 
   // Making happens on its own canvas: the sprite is put aside, as in a lesson.
-  function enterMaker() {
+  function enterMaker(open?: MakerDraft) {
     if (!lessonStashRef.current) {
       lessonStashRef.current = {
         frames, w: canvasW, h: canvasH, swatches, tags, name: projectName, path: currentFilePath, dirty,
@@ -1364,9 +1370,12 @@ function App() {
         onion: showOnionSkin, symmetry: modifiers.symmetry, zoomIdx,
       };
     }
-    const draft = makerDraft ?? newDraft(blankDoc(16, 16, swatches));
-    if (!makerDraft) setMakerDraft(draft);
-    const sel = Math.min(makerSel, draft.steps.length - 1);
+    // A draft from the shelf, or a fresh one (it joins the shelf once it has
+    // a step or a name).
+    const draft = open ?? newDraft(blankDoc(16, 16, swatches), getLessonAuthor() || 'Anonymous');
+    setMakerDraft(draft);
+    setMakerRec(null);
+    const sel = draft.steps.length - 1;
     setMakerSel(sel);
     loadDoc(snapshotBefore(draft, sel + 1));
     setProjectName(`${draft.title}.spr`);
@@ -1376,7 +1385,11 @@ function App() {
     setTutorialMode('authoring');
   }
 
-  const updateDraft = (patch: Partial<MakerDraft>) => setMakerDraft((d) => (d ? touch(d, patch) : d));
+  const updateDraft = (patch: Partial<MakerDraft>) => {
+    // The name signs this person's next lessons too.
+    if (patch.author !== undefined) setLessonAuthor(patch.author.trim());
+    setMakerDraft((d) => (d ? touch(d, patch) : d));
+  };
 
   const makerActions = {
     select: (i: number) => {
@@ -1477,12 +1490,60 @@ function App() {
     if (tutorialMode === 'authoring' && makerDraft) setProjectName(`${makerDraft.title || 'Untitled lesson'}.spr`);
   }, [tutorialMode, makerDraft?.title]);
 
-  // Keep the draft safe across reloads.
+  // Every change to the draft goes on the shelf, and the shelf is kept safe
+  // across reloads.
   useEffect(() => {
-    if (!makerDraft) return;
-    const id = setTimeout(() => writeLessonDraft(makerDraft), 600);
-    return () => clearTimeout(id);
+    if (makerDraft) setLessonDrafts((ds) => shelveDraft(ds, makerDraft));
   }, [makerDraft]);
+  const shelfLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!shelfLoadedRef.current) { shelfLoadedRef.current = true; return; }
+    const id = setTimeout(() => {
+      if (!writeLessonDrafts(lessonDrafts)) setLibraryNotice({ kind: 'error', text: 'Storage is full — your newest lesson changes are only kept until you close the app. Share (export) lessons to keep them.' });
+    }, 600);
+    return () => clearTimeout(id);
+  }, [lessonDrafts]);
+
+  // ── Lesson shelf: open, copy, delete drafts; import shared lessons ────────
+  const shelf = {
+    edit: (d: MakerDraft) => enterMaker(d),
+    play: (d: MakerDraft) => { if (d.steps.length) startLesson(draftToLesson(d)); },
+    copy: (d: MakerDraft) => {
+      const c = copyDraft(d);
+      setLessonDrafts((ds) => [c, ...ds]);
+      setLibraryNotice({ kind: 'ok', text: `Copied “${d.title}”.` });
+    },
+    remove: (id: string) => {
+      setLessonDrafts((ds) => ds.filter((d) => d.id !== id));
+      if (makerDraft?.id === id) setMakerDraft(null);
+    },
+    importText: (text: string) => {
+      try {
+        const r = importLesson(text, importedLessons, BUILTIN_LESSONS.map((l) => l.id));
+        setImportedLessons(r.lessons);
+        setLibraryTab('all');
+        setFreshLessonId(r.lesson.id);
+        setLibraryNotice(writeImportedLessons(r.lessons)
+          ? { kind: 'ok', text: `${r.replaced ? 'Updated' : 'Added'} “${r.lesson.title}” by ${r.lesson.author} — click it to play.` }
+          : { kind: 'error', text: `Added “${r.lesson.title}”, but storage is full: it's only here until you close the app.` });
+      } catch (err) {
+        setLibraryNotice({ kind: 'error', text: err instanceof Error ? err.message : 'Could not read that lesson.' });
+      }
+    },
+    importFile: async (file: File) => {
+      if (file.size > 8 * 1024 * 1024) { setLibraryNotice({ kind: 'error', text: 'That file is too big to be a lesson.' }); return; }
+      shelf.importText(await file.text());
+    },
+    pick: async () => {
+      const file = await pickFile('.sindri-lesson,.json');
+      if (file) await shelf.importFile(file);
+    },
+    removeImported: (id: string) => {
+      const next = importedLessons.filter((l) => l.id !== id);
+      setImportedLessons(next);
+      writeImportedLessons(next);
+    },
+  };
 
   // The stamp animation plays once.
   useEffect(() => {
@@ -2142,10 +2203,12 @@ function App() {
     }
     if (k === 'tutorialMode') {
       if (v === 'authoring' && tutorialMode !== 'authoring') { enterMaker(); return; }
+      if (v === 'library' && tutorialMode !== 'library') { setLibraryNotice(null); setFreshLessonId(null); }
       setTutorialMode(v as TutorialMode);
       // Leaving a lesson or the maker by any route gives the sprite back.
       if ((tutorialMode === 'playing' || tutorialMode === 'authoring') && v !== 'playing' && v !== 'authoring') {
         setMakerRec(null);
+        setMakerDraft(null);
         restoreLessonStash();
       }
     }
@@ -2415,7 +2478,8 @@ function App() {
           else if (id === 'flip-v')         flipV();
           else if (id === 'rotate-cw')      rotate90(true);
           else if (id === 'rotate-ccw')     rotate90(false);
-          else if (id === 'lessons')        setTweak('tutorialMode', 'library');
+          else if (id === 'lessons')        { setLibraryTab('all'); setTweak('tutorialMode', 'library'); }
+          else if (id === 'my-lessons')     { setLibraryTab('mine'); setTweak('tutorialMode', 'library'); }
           else if (id === 'create-lesson')  setTweak('tutorialMode', 'authoring');
           else if (id === 'ask-sindri')     setCmdKOpen(true);
           else if (id === 'toggle-grid')    setTweak('showGrid', !showGrid);
@@ -2442,10 +2506,22 @@ function App() {
       <TutorialLibrary
         open={tutorialMode === 'library'}
         lessons={BUILTIN_LESSONS}
+        imported={importedLessons}
         completed={completedLessons}
+        drafts={lessonDrafts}
+        initialTab={libraryTab}
+        freshId={freshLessonId}
+        notice={libraryNotice}
         onClose={() => setTweak('tutorialMode', 'off')}
         onStart={(lesson) => startLesson(lesson)}
         onAuthor={() => setTweak('tutorialMode', 'authoring')}
+        onEditDraft={shelf.edit}
+        onPlayDraft={shelf.play}
+        onCopyDraft={shelf.copy}
+        onDeleteDraft={shelf.remove}
+        onImport={() => void shelf.pick()}
+        onImportFile={(f) => void shelf.importFile(f)}
+        onRemoveImported={shelf.removeImported}
       />
 
       {/* New project modal — accessible from the editor via ⌘N */}

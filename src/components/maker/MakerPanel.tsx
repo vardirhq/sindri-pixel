@@ -184,6 +184,25 @@ export function MakerPanel(p: MakerPanelProps) {
           onChange={(e) => p.onChange({ title: e.target.value })}
           onKeyDown={(e) => e.stopPropagation()}
         />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '2px 0 8px' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-4)' }}>by</span>
+          <input
+            style={{ ...S.input, width: 120, flex: 'none', padding: '3px 6px', fontSize: 11.5 }}
+            value={draft.author}
+            placeholder="your name"
+            aria-label="Author"
+            onChange={(e) => p.onChange({ author: e.target.value })}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+          <input
+            style={{ ...S.input, flex: 1, minWidth: 0, padding: '3px 6px', fontSize: 11.5 }}
+            value={draft.summary}
+            placeholder="One line: what will they learn?"
+            aria-label="Summary"
+            onChange={(e) => p.onChange({ summary: e.target.value })}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+        </div>
         <div style={S.row}>
           <span role="button" style={{ ...S.btn('primary'), opacity: draft.steps.length ? 1 : 0.4 }} onClick={() => draft.steps.length && p.onPlay(0)} title="Play the whole lesson (⌘↵)">▶ Play</span>
           {draft.cleared ? (

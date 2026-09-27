@@ -142,23 +142,60 @@ export function markLessonCompleted(id: string): void {
   } catch { /* storage unavailable: progress just isn't remembered */ }
 }
 
-// ── Lesson maker draft ────────────────────────────────────────────────────────
+// ── Lesson shelf: drafts and imported lessons ─────────────────────────────────
 
-const LESSON_DRAFT_KEY = 'sindri_lesson_draft';
+const LESSON_DRAFTS_KEY = 'sindri_lesson_drafts';
+/** Before the shelf, the maker kept one draft here. */
+const LEGACY_DRAFT_KEY = 'sindri_lesson_draft';
+const IMPORTED_LESSONS_KEY = 'sindri_lessons_imported';
 
-/** The lesson being made (opaque here; the maker owns its shape). */
-export function readLessonDraft(): unknown | null {
+function readList(key: string): unknown[] {
   try {
-    const raw = localStorage.getItem(LESSON_DRAFT_KEY);
-    const draft = raw ? JSON.parse(raw) : null;
-    return draft && typeof draft === 'object' && Array.isArray(draft.steps) && draft.start ? draft : null;
+    const raw = JSON.parse(localStorage.getItem(key) ?? '[]');
+    return Array.isArray(raw) ? raw : [];
   } catch {
-    return null;
+    return [];
   }
 }
 
-export function writeLessonDraft(draft: unknown): void {
+/** Write a list; false when storage is full or unavailable. */
+function writeList(key: string, items: unknown[]): boolean {
   try {
-    localStorage.setItem(LESSON_DRAFT_KEY, JSON.stringify(draft));
-  } catch { /* storage full: the draft lives on in memory */ }
+    localStorage.setItem(key, JSON.stringify(items));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The lessons being made (opaque here; the maker owns their shape). A
+ *  single draft from before the shelf is carried over. */
+export function readLessonDrafts(): unknown[] {
+  const drafts = readList(LESSON_DRAFTS_KEY);
+  try {
+    const legacy = localStorage.getItem(LEGACY_DRAFT_KEY);
+    if (legacy) {
+      const d = JSON.parse(legacy);
+      if (d && typeof d === 'object' && !drafts.some((x) => (x as { id?: unknown })?.id === d.id)) drafts.unshift(d);
+      if (writeList(LESSON_DRAFTS_KEY, drafts)) localStorage.removeItem(LEGACY_DRAFT_KEY);
+    }
+  } catch { /* a broken legacy draft is left where it is */ }
+  return drafts;
+}
+
+export const writeLessonDrafts = (drafts: unknown[]): boolean => writeList(LESSON_DRAFTS_KEY, drafts);
+
+/** Lessons people shared (validated by the caller on the way in and out). */
+export const readImportedLessons = (): unknown[] => readList(IMPORTED_LESSONS_KEY);
+export const writeImportedLessons = (lessons: unknown[]): boolean => writeList(IMPORTED_LESSONS_KEY, lessons);
+
+const LESSON_AUTHOR_KEY = 'sindri_lesson_author';
+
+/** The name this person signs their lessons with. */
+export function getLessonAuthor(): string {
+  try { return localStorage.getItem(LESSON_AUTHOR_KEY) ?? ''; } catch { return ''; }
+}
+
+export function setLessonAuthor(name: string): void {
+  try { localStorage.setItem(LESSON_AUTHOR_KEY, name); } catch { /* not remembered */ }
 }

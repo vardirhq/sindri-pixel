@@ -73,7 +73,8 @@ Frontend (`src/`):
   built-in lessons (`builtin.ts`, whose tests play each step against its own
   example art). `maker.ts` is the lesson maker's model: recording
   a step from a before/after snapshot, drafts, and draft → lesson;
-  `components/maker/` is its UI (course strip, step inspector, maker bar). `components/Tutorial.tsx` renders the library and the player
+  `components/maker/` is its UI (course strip, step inspector, maker bar). `shelf.ts` is the list logic for the *My lessons* shelf (drafts, and
+  imported `.sindri-lesson` files, validated on the way in). `components/Tutorial.tsx` renders the library and the player
   lane; `App.tsx` puts the learner's sprite aside while a lesson runs.
 - `lib/platform.ts` — Tauri detection and web fallbacks (download/file-pick).
 - `lib/storage.ts` — persistence helpers.
