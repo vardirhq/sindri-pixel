@@ -141,3 +141,24 @@ export function markLessonCompleted(id: string): void {
     localStorage.setItem(LESSONS_DONE_KEY, JSON.stringify([...done]));
   } catch { /* storage unavailable: progress just isn't remembered */ }
 }
+
+// ── Lesson maker draft ────────────────────────────────────────────────────────
+
+const LESSON_DRAFT_KEY = 'sindri_lesson_draft';
+
+/** The lesson being made (opaque here; the maker owns its shape). */
+export function readLessonDraft(): unknown | null {
+  try {
+    const raw = localStorage.getItem(LESSON_DRAFT_KEY);
+    const draft = raw ? JSON.parse(raw) : null;
+    return draft && typeof draft === 'object' && Array.isArray(draft.steps) && draft.start ? draft : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeLessonDraft(draft: unknown): void {
+  try {
+    localStorage.setItem(LESSON_DRAFT_KEY, JSON.stringify(draft));
+  } catch { /* storage full: the draft lives on in memory */ }
+}

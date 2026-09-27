@@ -50,10 +50,6 @@ export interface TutorialSpotlightProps {
   callout?: SpotlightCallout | null;
 }
 
-export interface TutorialBuilderRibbonProps {
-  onExit: () => void;
-  onPreview: () => void;
-}
 
 // ---------------------------------------------------------------------------
 // Styles
@@ -119,8 +115,6 @@ const tutStyles = {
   callout: { position: 'absolute', background: 'var(--paper-2)', border: '1px solid var(--cyan)', padding: '8px 12px', maxWidth: 240, color: 'var(--ink)', fontFamily: 'var(--font-display)', fontSize: 12, pointerEvents: 'auto' } as React.CSSProperties,
   calloutKicker: { fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--cyan)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 4 } as React.CSSProperties,
   calloutTail: { position: 'absolute', width: 8, height: 8, background: 'var(--paper-2)', border: '1px solid var(--cyan)', borderTop: 'none', borderLeft: 'none', transform: 'rotate(45deg)' } as React.CSSProperties,
-  ribbon: { height: 24, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(224,85,85,0.10)', borderBottom: '1px solid var(--red)', color: 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: 10.5, letterSpacing: '0.14em', textTransform: 'uppercase', gap: 14 } as React.CSSProperties,
-  ribbonBtn: { fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--red)', border: '1px solid var(--red)', padding: '1px 8px', cursor: 'pointer', letterSpacing: '0.06em' } as React.CSSProperties,
 };
 
 // ---------------------------------------------------------------------------
@@ -396,16 +390,3 @@ export function TutorialSpotlight({ targetRect, callout }: TutorialSpotlightProp
   );
 }
 
-// ---------------------------------------------------------------------------
-// TutorialBuilderRibbon
-// ---------------------------------------------------------------------------
-
-export function TutorialBuilderRibbon({ onExit, onPreview }: TutorialBuilderRibbonProps) {
-  return (
-    <div style={tutStyles.ribbon}>
-      <span>builder mode · authoring lesson</span>
-      <span style={tutStyles.ribbonBtn} onClick={onPreview}>play test</span>
-      <span style={tutStyles.ribbonBtn} onClick={onExit}>exit builder</span>
-    </div>
-  );
-}

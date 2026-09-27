@@ -191,3 +191,11 @@ export function evaluateStep(step: LessonStep, s: EditorState): CheckResult[] {
 
 /** A step is done when every check passes (a step without checks is read-only). */
 export const stepDone = (results: CheckResult[]): boolean => results.length > 0 && results.every((r) => r.met);
+
+const NO_STATE: EditorState = {
+  tool: 'pan', color: '#000000', frame: [], allFrames: [], frameIndex: -1, frameCount: 0,
+  layerCount: 0, tagCount: 0, onion: false, symmetry: 'off', playing: false,
+};
+
+/** A check's wording on its own (for the lesson maker's goal chips). */
+export const describeCheck = (check: Check): string => evaluate(check, NO_STATE).label;

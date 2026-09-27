@@ -71,7 +71,9 @@ Frontend (`src/`):
   (`types.ts`), the pure check engine that evaluates a step against the
   editor state (`checks.ts`), lesson-file validation (`validate.ts`) and the
   built-in lessons (`builtin.ts`, whose tests play each step against its own
-  example art). `components/Tutorial.tsx` renders the library and the player
+  example art). `maker.ts` is the lesson maker's model: recording
+  a step from a before/after snapshot, drafts, and draft → lesson;
+  `components/maker/` is its UI (course strip, step inspector, maker bar). `components/Tutorial.tsx` renders the library and the player
   lane; `App.tsx` puts the learner's sprite aside while a lesson runs.
 - `lib/platform.ts` — Tauri detection and web fallbacks (download/file-pick).
 - `lib/storage.ts` — persistence helpers.
