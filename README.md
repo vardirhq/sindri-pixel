@@ -41,6 +41,7 @@ Sindri Pixel is preparing its first cross-platform beta. Native Linux, macOS, an
 | 🎯 **Precision surface** | Zoom levels from 4× to 32×, pixel grid overlay, a draggable minimap, and full undo/redo history. |
 | 🧩 **Palette profiles** | Ship-ready **Sindri**, **NES**, and **Game Boy** palettes, or start from an empty swatch set. |
 | 🏷️ **Animation tags** | Name frame ranges (idle, run, attack) with forward, reverse or ping-pong playback; loop one while you work. Sheet export writes Aseprite-format JSON with the tags for engine importers. |
+| ✨ **Effects** | Outline and drop shadow with a live preview (on the art's layer or their own), and trim the canvas to the art in one click. |
 | ▦ **Tilemaps** | Turn any layer into a tilemap (the tile size is guessed from the art): repeated and flipped tiles are found for you, drawing on one tile draws on every copy, tiles can be stamped from the tileset, and the map exports as a tileset PNG plus a Tiled `.tmj`. |
 | 🔗 **Linked cels** | Frames can share a layer's drawing — duplicate a frame as linked, or link a layer to the previous frame — so parts that don't move are drawn and fixed once. |
 | 🎨 **Palette tools** | Double-click a swatch to recolour it everywhere, live, in one undo step. Import and export `.gpl`, `.hex` (Lospec) and `.pal` palettes. |

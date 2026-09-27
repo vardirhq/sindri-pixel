@@ -8,6 +8,11 @@
   - Options: `--scale`, `--frame all`, `--tag <name>` (only that animation), `--columns`, `--out`, and `--sindri <assets folder>` to write straight into a Sindri project.
   - `sindri-pixel info` describes a sprite: its size, frames, layers, tags and palette.
   - It uses the same exporters as the app, so the output is identical. It is one Node script (Node 20+), attached to each release as `sindri-pixel.mjs`.
+- **Outline and drop shadow**, from *Menu → Edit*. A small panel previews the effect live on the canvas as you change it. *Apply* (↵) keeps it as one undo step, and *Cancel* (Esc) puts the sprite back exactly.
+  - **Outline:** around the art or on its own edge pixels, with or without rounded corners. The colour starts as the palette's darkest.
+  - **Drop shadow:** any offset up to 8 pixels, falling only where the art isn't.
+  - **Options for both:** every frame or just this one. *On its own layer, below* puts the new pixels on a layer under the art, so they stay editable. The art stays selected.
+- **Trim canvas to the art** shrinks the canvas to the smallest box holding every painted pixel of every frame and layer. When the sprite has a tilemap layer, the trim snaps outward to whole tiles so the grid stays aligned.
 - **Export to Sindri.** *Menu → Export to Sindri…* writes a sprite straight into a Sindri engine (sindri2) project. The desktop app asks for the project's assets folder once and remembers it; the browser downloads the files.
   - Three files, the way Sindri keeps art: `textures/<name>.png`, the `textures/<name>.sheet.json` that names its frames, and `prefabs/<name>.prefab.json` with the entity.
   - Frames are named by animation tag (`run-0`, `run-1`…). Each tag becomes a clip in `sindri.animation.sprite` (reverse and ping-pong tags play that way), the first clip plays, and `sindri.sprite` shows its first frame. A tag with mixed frame durations plays at their average, because a Sindri clip has one speed.
@@ -67,6 +72,7 @@
 
 ### Fixed
 
+- **Crop to selection** kept the canvas's top-left corner instead of the selected area whenever the selection didn't start at the corner. It now cuts exactly the selection.
 - The canvas no longer crashes when the sprite changes size without the zoom changing (for example, opening a 16×16 file while viewing a 32×32 one at the same zoom): the drawing routine kept using the old size.
 - The editor no longer grows taller than the window when the tools panel is long. The panel scrolls on its own now; before, it stretched the whole editor row, pushing the canvas off-centre and the timeline and status bar below the bottom of a 900px-tall window.
 - **Sprite-sheet splitting no longer moves a boot or a fist to the wrong pose.** The splitter works on a coarse grid, which can join poses that are only a few pixels apart, like a boot hanging down beside the hair of the pose below. The cut between them could then give the boot to the lower pose, leaving one frame footless and another with a floating boot. Every separate shape on the sheet now goes whole to the pose it belongs to. Only poses that really touch are divided by the cut.

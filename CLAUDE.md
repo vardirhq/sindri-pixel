@@ -65,6 +65,9 @@ Frontend (`src/`):
   `App.updateActiveLayerPixels` against the layer as it was at `pushHistory`),
   tile-size guessing, and tileset PNG + Tiled `.tmj` export. Has tests.
   `components/TilesPanel.tsx` is its UI under the selected layer.
+- `lib/effects.ts` — outline, drop shadow, content bounds and cropping, pure
+  so `components/EffectsPanel.tsx` can preview them live (App re-runs the
+  effect on the frames as they were when the panel opened). Has tests.
 - `lib/sindriExport.ts` — export to the Sindri engine (sindri2, a sibling
   repo): a texture, its `.sheet.json` and a `.prefab.json` (exactly one root
   entity). Sprites get `sindri.sprite` + `sindri.animation.sprite` (a clip per
