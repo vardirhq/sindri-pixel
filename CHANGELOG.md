@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Tilemaps.** Any layer can become a tilemap: open *Layers*, pick a tile size and press *Make tilemap*. The size that fits the art best is suggested (✓), so an existing level or an AI-generated one is one click away.
+  - **Tiles are found for you.** The tileset is worked out from the pixels: every distinct tile is listed once, a flipped copy reuses the same tile, and each tile shows how often it's used. There's nothing to keep in sync by hand, and every drawing tool keeps working.
+  - **Edit every copy.** Drawing in one tile draws in every copy of it, live and flipped to match; hovering a tile outlines all its copies, so you see what a stroke will change. Drawing on empty ground stays where you draw. Turn *Edit every copy* off to change just one cell (it becomes a new tile).
+  - **Stamp tiles.** Click a tile in the tileset and the pencil places it whole, snapped to the grid; click it again to stop.
+  - **Export map** writes the tileset as a PNG and the map as a Tiled `.tmj` (flipped tiles use Tiled's flip bits), which Godot, Unity, Phaser, Defold and Tiled read. All of the frame's tilemap layers with the same tile size go into one map, sharing one tileset.
+  - Tilemap layers carry a ▦ badge with their tile size, and the tile size is saved in the `.spr` file.
 - **My lessons shelf.** The lesson library has a *My lessons* tab with every lesson you're making, not just one. Each card shows the lesson's picture, how many steps it has, when you last edited it, and whether it's a *draft* or *cleared*. Click one to keep making it, or *play*, *copy* or *delete* it (delete asks twice). New lessons join the shelf as soon as they have a step or a name. The single draft kept by the previous version is moved onto the shelf.
 - **Import shared lessons.** *Import lesson…* in the library (or drop a file on it) adds a `.sindri-lesson` file someone shared. It is checked in full before it's accepted. It lands in *All*, marked *new* and *shared by* its author, and plays like any other lesson. Importing a newer copy of the same lesson replaces the old one. A file that isn't a valid lesson, or that claims a built-in lesson's id, is refused with the reason. Shared lessons can be removed from the shelf.
 - The lesson maker now has an **author** and a **one-line summary** under the title, which is what learners see on the library card. Your name is remembered for your next lessons.

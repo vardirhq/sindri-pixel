@@ -56,6 +56,11 @@ function validateFrame(frame: unknown, frameIndex: number, w: number, h: number)
       `frame ${frameIndex + 1}, layer ${layerIndex + 1} has invalid opacity`,
     );
     assert(layer.link === undefined || (typeof layer.link === 'string' && layer.link.length > 0), `frame ${frameIndex + 1}, layer ${layerIndex + 1} has an invalid link`);
+    const tm = layer.tilemap as { tw?: unknown; th?: unknown } | undefined;
+    assert(
+      tm === undefined || (tm !== null && typeof tm === 'object' && [tm.tw, tm.th].every((v) => Number.isInteger(v) && Number(v) >= 1 && Number(v) <= 256)),
+      `frame ${frameIndex + 1}, layer ${layerIndex + 1} has an invalid tile size`,
+    );
     assert(Array.isArray(layer.pixels) && layer.pixels.length === h, `frame ${frameIndex + 1}, layer ${layerIndex + 1} has the wrong height`);
     layer.pixels.forEach((row, y) => {
       assert(Array.isArray(row) && row.length === w, `frame ${frameIndex + 1}, layer ${layerIndex + 1}, row ${y + 1} has the wrong width`);
