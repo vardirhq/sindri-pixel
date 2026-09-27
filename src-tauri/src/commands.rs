@@ -130,6 +130,38 @@ pub async fn write_sprite_file(path: String, content: String) -> Result<(), Stri
         .map_err(|error| error.to_string())?
 }
 
+/// Palette file extensions `write_palette_file` will write.
+const PALETTE_EXTENSIONS: [&str; 3] = ["gpl", "hex", "pal"];
+/// Palettes are a few hundred colours at most; anything larger is not one.
+const MAX_PALETTE_BYTES: usize = 64 * 1024;
+
+fn validate_palette_path(path: &std::path::Path, content: &str) -> Result<(), String> {
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !PALETTE_EXTENSIONS.contains(&extension.as_str()) {
+        return Err(format!(
+            "palettes are saved as .gpl, .hex or .pal, not .{extension}"
+        ));
+    }
+    if content.len() > MAX_PALETTE_BYTES {
+        return Err("palette file is too large".to_string());
+    }
+    Ok(())
+}
+
+/// Write a palette file (.gpl, .hex or .pal) to disk.
+#[command]
+pub async fn write_palette_file(path: String, content: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(path);
+    validate_palette_path(&path, &content)?;
+    tauri::async_runtime::spawn_blocking(move || atomic_write(&path, content.as_bytes()))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 /// Nearest-neighbor upscale of a flat RGBA buffer by an integer factor.
 fn upscale_rgba(pixels: &[u8], width: u32, height: u32, scale: u32) -> Vec<u8> {
     if scale <= 1 {
@@ -352,6 +384,31 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(std::fs::read_to_string(path).unwrap(), "{\"version\":2}");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn palette_writes_only_palette_files() {
+        let ok = std::path::Path::new("colors.GPL");
+        assert!(validate_palette_path(ok, "GIMP Palette\n").is_ok());
+        let wrong = std::path::Path::new("notes.txt");
+        assert!(validate_palette_path(wrong, "x")
+            .unwrap_err()
+            .contains(".txt"));
+        let huge = "0".repeat(MAX_PALETTE_BYTES + 1);
+        assert!(validate_palette_path(ok, &huge).is_err());
+    }
+
+    #[tokio::test]
+    async fn palette_file_is_written() {
+        let directory =
+            std::env::temp_dir().join(format!("sindri-pixel-pal-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("sweetie.hex");
+        write_palette_file(path.to_string_lossy().into_owned(), "1a1c2c\n".to_string())
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "1a1c2c\n");
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

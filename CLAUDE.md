@@ -93,7 +93,7 @@ Standalone web app (`web/`):
 Backend (`src-tauri/src/`):
 
 - `commands.rs` — Tauri commands invoked from the frontend:
-  `read_sprite_file`, `write_sprite_file`, `export_png`, `export_gif`,
+  `read_sprite_file`, `write_sprite_file`, `write_palette_file`, `export_png`, `export_gif`,
   `import_png`. Registered in `lib.rs` via `generate_handler!`.
 - `lib.rs` / `main.rs` — app setup and entry point.
 - `tauri.conf.json` — window, bundle, and CSP config. The CSP is deliberately
