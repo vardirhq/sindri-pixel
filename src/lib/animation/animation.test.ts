@@ -238,3 +238,23 @@ describe('frame grid planning', () => {
     expect([byTarget.grids[0].gridWidth, byTarget.grids[0].gridHeight]).toEqual([4, 2]);
   });
 });
+
+describe('editor sheet JSON', () => {
+  it('describes a grid sheet with the project’s tags', async () => {
+    const { gridSheet, sheetJson } = await import('./sheet');
+    const sheet = gridSheet(5, 64, 64, 3);
+    expect(sheet.image).toEqual({ width: 192, height: 128 });
+    expect(sheet.rects[4]).toEqual({ x: 64, y: 64, w: 64, h: 64 });
+    const json = sheetJson(sheet, {
+      name: 'hero', image: 'hero_sheet.png', app: 'Sindri Pixel', durations: [100, 100, 100, 150, 150], pingPong: false, scale: 2,
+      tags: [{ name: 'idle', from: 0, to: 2, direction: 'pingpong' }, { name: 'run', from: 3, to: 4, direction: 'forward' }],
+    }) as { frames: { duration: number }[]; meta: { image: string; app: string; frameTags: unknown[] } };
+    expect(json.meta.image).toBe('hero_sheet.png');
+    expect(json.meta.app).toBe('Sindri Pixel');
+    expect(json.meta.frameTags).toEqual([
+      { name: 'idle', from: 0, to: 2, direction: 'pingpong' },
+      { name: 'run', from: 3, to: 4, direction: 'forward' },
+    ]);
+    expect(json.frames.map((f) => f.duration)).toEqual([100, 100, 100, 150, 150]);
+  });
+});

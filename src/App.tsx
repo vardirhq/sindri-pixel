@@ -24,6 +24,8 @@ import { getRecents, pushRecent, getSavedTemplates, saveTemplate, readAutosave, 
 import type { RecentFile, SavedTemplate, AutosaveSnapshot } from './lib/storage';
 import { IS_TAURI, downloadBytes, downloadText, pickFile, encodePngInBrowser, decodePngInBrowser } from './lib/platform';
 import { parseProject, serializeProject } from './lib/project-format';
+import { clampTags, freshTagName, nextPlayFrame, tagSequence, tagsAfterDelete, tagsAfterInsert, tagsAfterMove, validateTags, type FrameTag } from './lib/tags';
+import { gridSheet, sheetJson } from './lib/animation';
 import { buildSpriteSheet, compositeFrame as compositeSpriteFrame, frameFromPackedPixels } from './lib/sprite';
 import { ImportAiArtDialog } from './components/import/ImportAiArtDialog';
 import type { AiArtImportResult } from './components/import/ImportAiArtDialog';
@@ -82,6 +84,7 @@ interface HistorySnapshot {
   frames: Frame[];
   w: number;
   h: number;
+  tags: FrameTag[];
 }
 
 function makeProposal(prompt: string): Proposal {
@@ -399,7 +402,7 @@ function ExportModal({
         )}
 
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-4)', marginBottom: 20 }}>
-          output · {outW} × {outH} px{format === 'gif' ? ` · ${frameCount} frames` : format === 'sheet' ? ` · ${frameCount} tiles` : ''}
+          output · {outW} × {outH} px{format === 'gif' ? ` · ${frameCount} frames` : format === 'sheet' ? ` · ${frameCount} tiles + .json (frames, durations, tags)` : ''}
         </div>
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -417,6 +420,10 @@ function ExportModal({
 
 function App() {
   const [frames, setFrames] = useState<Frame[]>(INITIAL_FRAMES);
+  const [tags, setTags] = useState<FrameTag[]>([]);
+  // The tag whose frames playback loops over (null = every frame).
+  const [playTagId, setPlayTagId] = useState<string | null>(null);
+  const playStepRef = useRef(0);
   const [frameIdx, setFrameIdx] = useState(0);
   const [activeLayerIdx, setActiveLayerIdx] = useState(0);
   const [canvasW, setCanvasW] = useState(CANVAS_W);
@@ -514,6 +521,8 @@ function App() {
     setCanvasH(h);
     setProjectName(name);
     setFrames(newFrames);
+    setTags([]);
+    setPlayTagId(null);
     setFrameIdx(0);
     setActiveLayerIdx(0);
     setSwatches(PROFILE_SWATCHES[profile] ?? SWATCHES);
@@ -554,6 +563,7 @@ function App() {
 
   const applySnapshot = useCallback((snap: HistorySnapshot) => {
     setFrames(snap.frames);
+    setTags(snap.tags);
     setCanvasW(snap.w);
     setCanvasH(snap.h);
     setFrameIdx((i) => Math.max(0, Math.min(i, snap.frames.length - 1)));
@@ -565,26 +575,26 @@ function App() {
   }, []);
 
   const pushHistory = useCallback(() => {
-    pastRef.current = [...pastRef.current.slice(-49), { frames, w: canvasW, h: canvasH }];
+    pastRef.current = [...pastRef.current.slice(-49), { frames, w: canvasW, h: canvasH, tags }];
     futureRef.current = [];
     setDirty(true);
-  }, [frames, canvasW, canvasH]);
+  }, [frames, canvasW, canvasH, tags]);
 
   const undo = useCallback(() => {
     if (!pastRef.current.length) return;
     const prev = pastRef.current[pastRef.current.length - 1];
-    futureRef.current = [{ frames, w: canvasW, h: canvasH }, ...futureRef.current.slice(0, 49)];
+    futureRef.current = [{ frames, w: canvasW, h: canvasH, tags }, ...futureRef.current.slice(0, 49)];
     pastRef.current = pastRef.current.slice(0, -1);
     applySnapshot(prev);
-  }, [frames, canvasW, canvasH, applySnapshot]);
+  }, [frames, canvasW, canvasH, tags, applySnapshot]);
 
   const redo = useCallback(() => {
     if (!futureRef.current.length) return;
     const next = futureRef.current[0];
-    pastRef.current = [...pastRef.current.slice(-49), { frames, w: canvasW, h: canvasH }];
+    pastRef.current = [...pastRef.current.slice(-49), { frames, w: canvasW, h: canvasH, tags }];
     futureRef.current = futureRef.current.slice(1);
     applySnapshot(next);
-  }, [frames, canvasW, canvasH, applySnapshot]);
+  }, [frames, canvasW, canvasH, tags, applySnapshot]);
 
   useEffect(() => {
     if (tutorialMode !== 'playing') { setSpotlightRect(null); return; }
@@ -642,10 +652,22 @@ function App() {
   useEffect(() => {
     if (!isPlaying) return;
     if (centerTab !== 'editor') return;
-    // Each frame holds for its own duration.
-    const id = setTimeout(() => { setFrameIdx((i) => (i + 1) % frames.length); }, frames[frameIdx]?.duration ?? 120);
+    // Each frame holds for its own duration. With a tag chosen, playback
+    // loops over its frames in its direction (a ping-pong passes most frames
+    // twice, so the position in the cycle is tracked separately).
+    const tag = tags.find((t) => t.id === playTagId) ?? null;
+    const id = setTimeout(() => {
+      const seq = tag ? tagSequence(tag) : null;
+      const inCycle = seq ? seq[playStepRef.current % seq.length] === frameIdx : true;
+      // If the frame changed underneath us (a click, a new tag), restart the
+      // cycle from wherever the current frame first appears in it.
+      const step = seq && !inCycle ? Math.max(-1, seq.indexOf(frameIdx)) : playStepRef.current;
+      const next = nextPlayFrame(frames.length, tag, seq ? step : frameIdx);
+      playStepRef.current = next.step;
+      setFrameIdx(next.frame);
+    }, frames[frameIdx]?.duration ?? 120);
     return () => clearTimeout(id);
-  }, [isPlaying, frames, frameIdx, centerTab]);
+  }, [isPlaying, frames, frameIdx, centerTab, tags, playTagId]);
 
   const updateActiveLayerPixels = useCallback((newPixels: (string | null)[][]) => {
     setFrames((fs) => {
@@ -816,6 +838,7 @@ function App() {
       next.splice(idx, 0, blank);
       return next;
     });
+    setTags((t) => tagsAfterInsert(t, idx));
     setFrameIdx(idx);
   }, [canvasH, canvasW, pushHistory]);
 
@@ -1045,6 +1068,7 @@ function App() {
       next.splice(frameIdx + 1, 0, blank);
       return next;
     });
+    setTags((t) => tagsAfterInsert(t, frameIdx + 1));
     setFrameIdx((i) => i + 1);
   };
 
@@ -1065,6 +1089,7 @@ function App() {
       next.splice(idx + 1, 0, copy);
       return next;
     });
+    setTags((t) => tagsAfterInsert(t, idx + 1));
     setFrameIdx((i) => i + 1);
   };
 
@@ -1072,6 +1097,7 @@ function App() {
     if (frames.length <= 1) return;
     pushHistory();
     setFrames((fs) => fs.filter((_, i) => i !== idx));
+    setTags((t) => tagsAfterDelete(t, idx));
     setFrameIdx((i) => Math.max(0, Math.min(i, frames.length - 2)));
   };
 
@@ -1096,6 +1122,7 @@ function App() {
       next.splice(to, 0, f);
       return next;
     });
+    setTags((t) => tagsAfterMove(t, from, to));
     setFrameIdx(to);
   }, [frames.length, pushHistory]);
 
@@ -1147,6 +1174,7 @@ function App() {
       next.splice(frameIdx + 1, 0, { ...proposal.frame!, id: `frame_${Date.now()}` });
       return next;
     });
+    setTags((t) => tagsAfterInsert(t, frameIdx + 1));
     setSwatches((s) => (s.includes('#9bb070') ? s : [...s, '#9bb070']));
     setFrameIdx((i) => i + 1);
     setProposal(null);
@@ -1156,8 +1184,10 @@ function App() {
   const refineProposal = () => { setCmdKOpen(true); };
 
   // Apply loaded project data and reset editing state (history, dirty flag).
-  const applyProject = useCallback((newFrames: Frame[], w: number, h: number, name: string, projectSwatches?: string[]) => {
+  const applyProject = useCallback((newFrames: Frame[], w: number, h: number, name: string, projectSwatches?: string[], projectTags: FrameTag[] = []) => {
     setFrames(newFrames);
+    setTags(clampTags(projectTags, newFrames.length));
+    setPlayTagId(null);
     setCanvasW(w);
     setCanvasH(h);
     setProjectName(name);
@@ -1172,7 +1202,7 @@ function App() {
 
   const applySprJson = useCallback((json: string, fallbackName: string) => {
     const data = parseProject(json, fallbackName);
-    applyProject(data.frames, data.w, data.h, data.name, data.swatches);
+    applyProject(data.frames, data.w, data.h, data.name, data.swatches, data.tags);
     return { w: data.w, h: data.h, frameCount: data.frames.length };
   }, [applyProject]);
 
@@ -1284,7 +1314,7 @@ function App() {
       if (!IS_TAURI) {
         // Browser: download the .spr as a file.
         const name = projectName.endsWith('.spr') ? projectName : projectName + '.spr';
-        downloadText(serializeProject({ w: canvasW, h: canvasH, name, frames, swatches }), name);
+        downloadText(serializeProject({ w: canvasW, h: canvasH, name, frames, swatches, tags }), name);
         setDirty(false);
         return;
       }
@@ -1300,7 +1330,7 @@ function App() {
         if (!path.endsWith('.spr')) path += '.spr';
       }
       const name = path.split(/[/\\]/).pop() ?? projectName;
-      await invoke('write_sprite_file', { path, content: serializeProject({ w: canvasW, h: canvasH, name, frames, swatches }) });
+      await invoke('write_sprite_file', { path, content: serializeProject({ w: canvasW, h: canvasH, name, frames, swatches, tags }) });
       setCurrentFilePath(path);
       setProjectName(name);
       setDirty(false);
@@ -1310,7 +1340,7 @@ function App() {
       console.error('saveFile failed', err);
       window.alert(err instanceof Error ? err.message : 'Could not save the project.');
     }
-  }, [currentFilePath, projectName, canvasW, canvasH, frames, swatches]);
+  }, [currentFilePath, projectName, canvasW, canvasH, frames, swatches, tags]);
 
   // ── Export PNG (current frame, composited) ─────────────────────────────────
   const exportPng = useCallback(async (scale = 1) => {
@@ -1365,9 +1395,16 @@ function App() {
     try {
       const stem = projectName.replace(/\.spr$/i, '');
       const sheet = buildSpriteSheet(frames, canvasW, canvasH, columns ?? frames.length);
+      // Aseprite-format JSON beside the PNG: frame rectangles (in output
+      // pixels), durations and tags — what engine importers read.
+      const describe = (image: string) => JSON.stringify(sheetJson(
+        gridSheet(frames.length, canvasW * scale, canvasH * scale, columns ?? frames.length),
+        { name: stem, image, app: 'Sindri Pixel', durations: frames.map((f) => f.duration), pingPong: false, scale, tags },
+      ), null, 2);
       if (!IS_TAURI) {
         const bytes = await encodePngInBrowser(sheet.pixels, sheet.width, sheet.height, scale);
         downloadBytes(bytes, stem + '_sheet.png', 'image/png');
+        downloadText(describe(stem + '_sheet.png'), stem + '_sheet.json');
         return;
       }
       const path = await saveDialog({
@@ -1377,11 +1414,13 @@ function App() {
       });
       if (!path) return;
       await invoke('export_png', { path, width: sheet.width, height: sheet.height, pixels: sheet.pixels, scale });
+      const image = path.split(/[/\\]/).pop() ?? stem + '_sheet.png';
+      await invoke('write_sprite_file', { path: path.replace(/\.png$/i, '') + '.json', content: describe(image) });
     } catch (err) {
       console.error('exportSpriteSheet failed', err);
       window.alert(err instanceof Error ? err.message : 'Could not export the sprite sheet.');
     }
-  }, [projectName, frames, canvasW, canvasH]);
+  }, [projectName, frames, canvasW, canvasH, tags]);
 
   // ── Export modal dispatch ──────────────────────────────────────────────────
   const [exportModalFor, setExportModalFor] = useState<ExportFormat | null>(null);
@@ -1404,11 +1443,12 @@ function App() {
         h: canvasH,
         frames,
         swatches,
+        tags,
         dirty,
       });
     }, 1200);
     return () => clearTimeout(id);
-  }, [appStage, frames, canvasW, canvasH, projectName, swatches, currentFilePath, dirty]);
+  }, [appStage, frames, canvasW, canvasH, projectName, swatches, tags, currentFilePath, dirty]);
 
   const [recovery, setRecovery] = useState<AutosaveSnapshot | null>(() => {
     const snap = readAutosave();
@@ -1417,7 +1457,9 @@ function App() {
 
   const recoverAutosave = useCallback(() => {
     if (!recovery) return;
-    applyProject(recovery.frames as Frame[], recovery.w, recovery.h, recovery.projectName);
+    let recoveredTags: FrameTag[] = [];
+    try { recoveredTags = validateTags(recovery.tags, recovery.frames.length); } catch { /* drop malformed tags */ }
+    applyProject(recovery.frames as Frame[], recovery.w, recovery.h, recovery.projectName, undefined, recoveredTags);
     setSwatches(recovery.swatches ?? SWATCHES);
     setCurrentFilePath(recovery.path);
     setDirty(true); // recovered work is unsaved by definition
@@ -1485,6 +1527,41 @@ function App() {
     setContextMenu({ x, y, items });
   }, [frames.length]);
 
+  // ── Animation tags ─────────────────────────────────────────────────────────
+  const addTag = useCallback((from: number, to: number) => {
+    pushHistory();
+    const id = `tag_${Date.now()}`;
+    setTags((t) => [...t, { id, name: freshTagName(t), from, to, direction: 'forward' }]);
+  }, [pushHistory]);
+
+  const updateTag = useCallback((id: string, patch: Partial<Omit<FrameTag, 'id'>>) => {
+    pushHistory();
+    setTags((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  }, [pushHistory]);
+
+  const deleteTag = useCallback((id: string) => {
+    pushHistory();
+    setTags((ts) => ts.filter((t) => t.id !== id));
+    setPlayTagId((p) => (p === id ? null : p));
+  }, [pushHistory]);
+
+  const openTagContextMenu = useCallback((id: string, x: number, y: number) => {
+    const tag = tags.find((t) => t.id === id);
+    if (!tag) return;
+    const dir = (d: FrameTag['direction'], label: string): ContextItem =>
+      ({ type: 'action', id: `ctx-tag-dir:${d}:${id}`, label: `${tag.direction === d ? '✓ ' : '   '}${label}` });
+    const items: ContextItem[] = [
+      { type: 'action', id: `ctx-tag-play:${id}`, label: playTagId === id ? 'Stop looping this tag' : 'Loop this tag in playback' },
+      { type: 'separator' },
+      dir('forward', 'Forward'),
+      dir('reverse', 'Reverse'),
+      dir('pingpong', 'Ping-pong'),
+      { type: 'separator' },
+      { type: 'action', id: `ctx-tag-delete:${id}`, label: `Delete tag “${tag.name}”`, danger: true },
+    ];
+    setContextMenu({ x, y, items });
+  }, [tags, playTagId]);
+
   const openSwatchContextMenu = useCallback((swatchColor: string, x: number, y: number) => {
     const items: ContextItem[] = [
       { type: 'action', id: `ctx-swatch-use:${swatchColor}`,    label: 'Use this color' },
@@ -1539,6 +1616,14 @@ function App() {
     if (id.startsWith('ctx-frame-move-right:'))    { const i = parseInt(id.split(':')[1]); moveFrame(i, i + 1); return; }
     if (id.startsWith('ctx-frame-delete:'))        { deleteFrame(parseInt(id.split(':')[1])); return; }
 
+    if (id.startsWith('ctx-tag-play:'))   { const t = id.slice('ctx-tag-play:'.length); setPlayTagId((p) => (p === t ? null : t)); return; }
+    if (id.startsWith('ctx-tag-delete:')) { deleteTag(id.slice('ctx-tag-delete:'.length)); return; }
+    if (id.startsWith('ctx-tag-dir:'))    {
+      const [, dir, ...rest] = id.split(':');
+      updateTag(rest.join(':'), { direction: dir as FrameTag['direction'] });
+      return;
+    }
+
     if (id.startsWith('ctx-swatch-use:'))    { setColor(id.slice('ctx-swatch-use:'.length)); return; }
     if (id.startsWith('ctx-swatch-copy:'))   {
       void navigator.clipboard.writeText(id.slice('ctx-swatch-copy:'.length));
@@ -1549,7 +1634,7 @@ function App() {
       setSwatches((s) => s.filter((c) => c !== col));
       return;
     }
-  }, [closeContextMenu, selectAll, cutSelection, copySelection, pasteClipboard, deleteSelection, clearLayer, flipH, flipV, rotate90, frames, frameIdx, renameLayer, duplicateLayer, moveLayerUp, moveLayerDown, mergeDown, deleteLayer, duplicateFrame, insertFrameAt, moveFrame, deleteFrame]);
+  }, [closeContextMenu, selectAll, cutSelection, copySelection, pasteClipboard, deleteSelection, clearLayer, flipH, flipV, rotate90, frames, frameIdx, renameLayer, duplicateLayer, moveLayerUp, moveLayerDown, mergeDown, deleteLayer, duplicateFrame, insertFrameAt, moveFrame, deleteFrame, deleteTag, updateTag]);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   // Placed here so saveFile / exportPng / openFile are already in scope.
@@ -1765,6 +1850,12 @@ function App() {
           ghostFrame={showAiGhost && proposal?.visible ? proposal.frame ?? null : null}
           isPlaying={isPlaying}
           onFrameContextMenu={openFrameContextMenu}
+          tags={tags}
+          playTagId={playTagId}
+          onPlayTag={setPlayTagId}
+          onAddTag={addTag}
+          onUpdateTag={updateTag}
+          onTagContextMenu={openTagContextMenu}
         />
         {tutorialMode === 'playing' && spotlightRect && (
           <TutorialSpotlight

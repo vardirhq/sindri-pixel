@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Frame } from '../types';
-import { parseProject, serializeProject } from './project-format';
+import { PROJECT_FORMAT_VERSION, parseProject, serializeProject } from './project-format';
 
 const frame: Frame = {
   id: 'frame-1',
@@ -19,20 +19,44 @@ describe('Sindri Pixel project format', () => {
     const encoded = serializeProject({ name: 'hero.spr', w: 2, h: 2, frames: [frame], swatches: ['#ff0000'] });
     expect(parseProject(encoded)).toEqual({
       format: 'sindri-pixel',
-      version: 1,
+      version: 2,
       name: 'hero.spr',
       w: 2,
       h: 2,
       frames: [frame],
       swatches: ['#ff0000'],
+      tags: [],
     });
+  });
+
+  it('round-trips animation tags', () => {
+    const tags = [
+      { id: 't1', name: 'idle', from: 0, to: 1, direction: 'pingpong' as const },
+      { id: 't2', name: 'blink', from: 1, to: 1, direction: 'forward' as const },
+    ];
+    const encoded = serializeProject({ name: 'hero.spr', w: 2, h: 2, frames: [frame, { ...frame, id: 'frame-2' }], swatches: [], tags });
+    expect(parseProject(encoded).tags).toEqual(tags);
+  });
+
+  it('opens version 1 files, which have no tags', () => {
+    const v1 = JSON.stringify({ format: 'sindri-pixel', version: 1, name: 'old.spr', w: 2, h: 2, frames: [frame], swatches: [] });
+    expect(parseProject(v1).tags).toEqual([]);
+  });
+
+  it('rejects a tag outside the frames', () => {
+    const bad = JSON.stringify({
+      format: 'sindri-pixel', version: 2, name: 'x.spr', w: 2, h: 2, frames: [frame], swatches: [],
+      tags: [{ id: 't', name: 'run', from: 0, to: 3, direction: 'forward' }],
+    });
+    expect(() => parseProject(bad)).toThrow(/tag 1 is outside the frames/);
   });
 
   it('migrates legacy unversioned .spr files', () => {
     const legacy = JSON.stringify({ name: 'legacy.spr', w: 2, h: 2, frames: [frame] });
     const project = parseProject(legacy);
-    expect(project.version).toBe(1);
+    expect(project.version).toBe(PROJECT_FORMAT_VERSION);
     expect(project.swatches).toEqual([]);
+    expect(project.tags).toEqual([]);
   });
 
   it('rejects future versions', () => {

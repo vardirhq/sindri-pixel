@@ -40,6 +40,7 @@ Sindri Pixel is preparing its first cross-platform beta. Native Linux, macOS, an
 | 🔁 **Symmetry & tiling** | Vertical, horizontal, or four-way mirrored drawing, plus a tile-preview mode for seamless textures. |
 | 🎯 **Precision surface** | Zoom levels from 4× to 32×, pixel grid overlay, a draggable minimap, and full undo/redo history. |
 | 🧩 **Palette profiles** | Ship-ready **Sindri**, **NES**, and **Game Boy** palettes, or start from an empty swatch set. |
+| 🏷️ **Animation tags** | Name frame ranges (idle, run, attack) with forward, reverse or ping-pong playback; loop one while you work. Sheet export writes Aseprite-format JSON with the tags for engine importers. |
 | ⌨️ **Command palette + shortcuts** | `⌘K` fuzzy command palette and a complete keyboard map for tools, files, view, and timeline. |
 | 💾 **Autosave & crash recovery** | Work is continuously snapshotted; reopen after a crash and pick up exactly where you left off. |
 | 📚 **Interactive lessons** | A built-in tutorial library with a guided player *and* an authoring mode to build your own lessons. |
